@@ -74,7 +74,7 @@ export function DiagnosticsScreen() {
 
   async function exportLog() {
     const header = [
-      `Fleet Tracking diagnostics`,
+      `Kairosa diagnostics`,
       `Device: ${Device.manufacturer} ${Device.modelName} (Android ${Device.osVersion})`,
       `Service running: ${running}`,
       `Permissions: ${perms}`,

@@ -45,7 +45,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="Fleet Tracking Service",
+    title="Kairosa API",
     description="Location ingest, integrity scoring, and live tracking.",
     version="1.0.0",
     lifespan=lifespan,

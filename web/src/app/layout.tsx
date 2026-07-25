@@ -36,7 +36,7 @@ const jetbrains = localFont({
 });
 
 export const metadata: Metadata = {
-  title: "Fleet Tracking",
+  title: "Kairosa",
   description: "Live vehicle tracking with location-integrity monitoring.",
   icons: { icon: "/brand/favicon.svg" },
 };

@@ -181,14 +181,14 @@ export function oemInstructions(manufacturer: string | null): string[] {
 
   if (["xiaomi", "redmi", "poco"].includes(m))
     return [
-      "Settings → Apps → Manage apps → Fleet Tracking",
+      "Settings → Apps → Manage apps → Kairosa",
       "Turn ON “Autostart”",
       "Open “Battery saver” → choose “No restrictions”",
       "Lock the app in Recents (swipe up, tap the padlock)",
     ];
   if (["oppo", "realme", "oneplus"].includes(m))
     return [
-      "Settings → Battery → App battery management → Fleet Tracking",
+      "Settings → Battery → App battery management → Kairosa",
       "Turn ON “Allow background activity”",
       "Turn OFF “Sleep in background”",
       "Enable “Auto-launch” in Settings → Apps → Auto-launch",
@@ -196,25 +196,25 @@ export function oemInstructions(manufacturer: string | null): string[] {
   if (["vivo", "iqoo"].includes(m))
     return [
       "Settings → Battery → Background power consumption management",
-      "Find Fleet Tracking → “Allow high background power consumption”",
-      "Settings → Apps → Autostart → enable Fleet Tracking",
+      "Find Kairosa → “Allow high background power consumption”",
+      "Settings → Apps → Autostart → enable Kairosa",
     ];
   if (m === "samsung")
     return [
-      "Settings → Apps → Fleet Tracking → Battery",
+      "Settings → Apps → Kairosa → Battery",
       "Choose “Unrestricted”",
       "Settings → Battery → Background usage limits",
-      "Make sure Fleet Tracking is NOT in “Sleeping apps”",
+      "Make sure Kairosa is NOT in “Sleeping apps”",
     ];
   if (["huawei", "honor"].includes(m))
     return [
-      "Settings → Apps → Fleet Tracking → Battery",
+      "Settings → Apps → Kairosa → Battery",
       "Set “Launch” to Manage manually",
       "Enable Auto-launch, Secondary launch and Run in background",
     ];
 
   return [
-    "Settings → Apps → Fleet Tracking → Battery",
+    "Settings → Apps → Kairosa → Battery",
     "Allow background activity and remove any battery restriction",
   ];
 }

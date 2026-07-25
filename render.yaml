@@ -12,9 +12,9 @@
 
 services:
   - type: web
-    name: fleet-backend
+    name: kairosa-backend
     runtime: docker
-    repo: https://github.com/CHANGE_ME/CHANGE_ME   # your GitHub repo URL
+    repo: https://github.com/Kairosa-fleet/kairosa
     branch: main
     plan: free
     region: singapore          # closest Render region to India

@@ -57,7 +57,7 @@ export default function LoginPage() {
             <div className="flex items-center gap-2.5">
               <Logo size={28} className="text-[var(--accent)]" />
               <span className="font-[family-name:var(--font-jakarta)] text-lg font-semibold">
-                Fleet Tracking
+                Kairosa
               </span>
             </div>
             <ThemeToggle />

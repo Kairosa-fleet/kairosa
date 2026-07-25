@@ -24,7 +24,7 @@ export function Logo({
       xmlns="http://www.w3.org/2000/svg"
       className={className}
       role="img"
-      aria-label="Fleet Tracking"
+      aria-label="Kairosa"
     >
       <path
         d="M16 3.5c-5.1 0-9.2 4.03-9.2 9 0 6.3 7.9 14.4 8.6 15.06a.86.86 0 0 0 1.2 0c.7-.66 8.6-8.76 8.6-15.06 0-4.97-4.1-9-9.2-9Z"

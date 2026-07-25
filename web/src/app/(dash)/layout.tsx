@@ -72,7 +72,7 @@ export default function DashLayout({ children }: { children: React.ReactNode }) 
           {/* The wordmark is the first thing to go on narrow screens — the
               mark alone still identifies the product. */}
           <span className="hidden font-[family-name:var(--font-jakarta)] font-semibold whitespace-nowrap lg:inline">
-            Fleet Tracking
+            Kairosa
           </span>
         </div>
 

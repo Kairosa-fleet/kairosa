@@ -81,7 +81,7 @@ class Settings(BaseSettings):
     # --- Notifications ---
     PUBLIC_WEB_URL: str = "http://localhost:3000"
     MAIL_FROM: str = ""
-    MAIL_FROM_NAME: str = "Fleet Tracking"
+    MAIL_FROM_NAME: str = "Kairosa"
     SMTP_HOST: str = ""
     SMTP_PORT: int = 587
     SMTP_USER: str = ""
