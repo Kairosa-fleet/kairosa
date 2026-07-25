@@ -1,0 +1,274 @@
+@import "tailwindcss";
+
+/* ---------------------------------------------------------------------------
+   Design tokens — see docs/DESIGN_SYSTEM.md
+
+   Structure (spacing rhythm, tight headings, em radii, 0.2s motion, soft
+   colour-tinted shadows) follows bear.app, read from its live stylesheet.
+
+   Colour does not. Bear's accent is red, which in a tracking product already
+   means "offline / spoofed / critical" — a brand colour that doubles as the
+   alarm colour is unreadable at a glance. The brand is indigo → violet, and
+   red/amber/green are reserved strictly for status.
+--------------------------------------------------------------------------- */
+
+:root {
+  /* Surfaces carry a faint indigo tint rather than neutral grey — it ties the
+     palette together and reads warmer than a pure grey ramp. */
+  --bg: #ffffff;
+  --surface: #f7f7fb;
+  --surface-2: #ededf6;
+  --stroke: #e3e3ee;
+  --ink: #3a3a46;
+  --ink-2: #77778a;
+  --ink-3: #adadbf;
+
+  /* Brand: indigo → violet. Chosen because it reads energetic and optimistic
+     while colliding with none of the status colours below, so red/amber/green
+     stay free to mean danger/warning/healthy. */
+  --accent: #6366f1;
+  --accent-hover: #4f46e5;
+  --accent-2: #8b5cf6;
+  --accent-soft: #eef0fe;
+  /* Fill tokens are separate from the text token. On dark backgrounds the
+     text accent has to be lightened for legibility, but a lightened fill
+     would drop white button text to ~2.8:1. Fills stay saturated. */
+  --accent-fill: #5b5ce0;
+  --accent-fill-2: #7c4fe8;
+  --warm: #fb923c;
+
+  /* Status meanings are unchanged — see docs/DESIGN_SYSTEM.md §4. */
+  --success: #0f9d76;
+  --success-soft: #e7f8f2;
+  --warning: #d98200;
+  --warning-soft: #fdf3e3;
+  --danger: #e5484d;
+  --danger-soft: #fdeded;
+
+  /* Shadows are brand-tinted, not neutral black — a trick lifted from Bear,
+     which uses rgba(34,113,140,.3) on its primary elements. */
+  --shadow-card: 0 1px 2px rgb(70 70 120 / 0.05), 0 4px 14px rgb(80 80 140 / 0.07);
+  --shadow-pop: 0 4px 16px rgb(70 70 130 / 0.10), 0 16px 40px rgb(70 70 130 / 0.13);
+  --shadow-accent: 0 4px 14px rgb(99 102 241 / 0.35);
+  --map-ctrl-filter: none;
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  --bg: #141419;
+  --surface: #1c1c24;
+  --surface-2: #26262f;
+  --stroke: #33333f;
+  --ink: #ededf2;
+  --ink-2: #a0a0b2;
+  --ink-3: #6e6e82;
+  --accent: #818cf8;
+  --accent-hover: #a5b4fc;
+  --accent-2: #a78bfa;
+  --accent-soft: #24224a;
+  --accent-fill: #5b5ce0;
+  --accent-fill-2: #7c4fe8;
+  --warm: #fdba74;
+  --success: #34d399;
+  --success-soft: #12312a;
+  --warning: #fbbf24;
+  --warning-soft: #352814;
+  --danger: #f87171;
+  --danger-soft: #3b1f22;
+  --shadow-card: 0 1px 2px rgb(0 0 0 / 0.35), 0 4px 14px rgb(0 0 0 / 0.28);
+  --shadow-pop: 0 4px 16px rgb(0 0 0 / 0.45), 0 16px 40px rgb(0 0 0 / 0.38);
+  --shadow-accent: 0 4px 16px rgb(129 140 248 / 0.32);
+  --map-ctrl-filter: invert(1);
+  color-scheme: dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #141419;
+    --surface: #1c1c24;
+    --surface-2: #26262f;
+    --stroke: #33333f;
+    --ink: #ededf2;
+    --ink-2: #a0a0b2;
+    --ink-3: #6e6e82;
+    --accent: #818cf8;
+    --accent-hover: #a5b4fc;
+    --accent-2: #a78bfa;
+    --accent-soft: #24224a;
+    --accent-fill: #5b5ce0;
+    --accent-fill-2: #7c4fe8;
+    --warm: #fdba74;
+    --success: #34d399;
+    --success-soft: #12312a;
+    --warning: #fbbf24;
+    --warning-soft: #352814;
+    --danger: #f87171;
+    --danger-soft: #3b1f22;
+    --shadow-card: 0 1px 2px rgb(0 0 0 / 0.35), 0 4px 14px rgb(0 0 0 / 0.28);
+    --shadow-pop: 0 4px 16px rgb(0 0 0 / 0.45), 0 16px 40px rgb(0 0 0 / 0.38);
+    --shadow-accent: 0 4px 16px rgb(129 140 248 / 0.32);
+    --map-ctrl-filter: invert(1);
+    color-scheme: dark;
+  }
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-stroke: var(--stroke);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-2: var(--accent-2);
+  --color-warm: var(--warm);
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-jakarta), var(--font-inter), sans-serif;
+  --font-mono: var(--font-jetbrains), ui-monospace, monospace;
+
+  --radius-chip: 0.3rem;
+  --radius-control: 0.5rem;
+  --radius-card: 1rem;
+  --radius-pill: 2.5rem;
+
+  --shadow-card: var(--shadow-card);
+  --shadow-pop: var(--shadow-pop);
+  --shadow-accent: var(--shadow-accent);
+
+  /* Bear's motion is uniformly 0.2s ease-in-out — restrained, never bouncy. */
+  --ease-ui: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* These live in @layer base so Tailwind utilities can override them.
+   Unlayered CSS beats every @layer, so an h2 defined outside a layer would
+   ignore `text-base` on the element — a real bug this file used to have. */
+@layer base {
+  html {
+    font-size: 16px;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+    line-height: 1.6;
+  }
+
+  /* Bear's most characteristic type trait: headings run tight. */
+  h1, h2, h3, h4, h5, h6 {
+    font-family: var(--font-jakarta), var(--font-inter), sans-serif;
+    line-height: 1.1;
+    letter-spacing: -0.015em;
+    font-weight: 600;
+  }
+
+  h1 { font-size: 2.6rem; }
+  h2 { font-size: 2rem; }
+  h3 { font-size: 1.4rem; line-height: 1.2; }
+
+  ::selection {
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 0.3rem;
+}
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--surface-2);
+  border-radius: 5px;
+  border: 2px solid var(--bg);
+}
+::-webkit-scrollbar-thumb:hover { background: var(--ink-3); }
+
+/* MapLibre chrome restyled — without this the map controls look pasted in
+   from a different product. */
+.maplibregl-ctrl-attrib {
+  background: color-mix(in srgb, var(--bg) 88%, transparent) !important;
+  color: var(--ink-2) !important;
+  font-size: 11px !important;
+  border-radius: 0.4rem 0 0 0 !important;
+}
+.maplibregl-ctrl-attrib a { color: var(--ink-2) !important; }
+.maplibregl-ctrl-group {
+  background: var(--bg) !important;
+  border: 1px solid var(--stroke) !important;
+  border-radius: 0.5rem !important;
+  box-shadow: var(--shadow-card) !important;
+  overflow: hidden;
+}
+.maplibregl-ctrl-group button + button {
+  border-top: 1px solid var(--stroke) !important;
+}
+.maplibregl-ctrl-group button span { filter: var(--map-ctrl-filter); }
+.maplibregl-popup-content {
+  background: var(--bg) !important;
+  color: var(--ink) !important;
+  border: 1px solid var(--stroke);
+  border-radius: 0.8rem !important;
+  box-shadow: var(--shadow-pop) !important;
+  padding: 0 !important;
+  overflow: hidden;
+}
+.maplibregl-popup-tip { display: none !important; }
+
+/* --- Polish layer ---------------------------------------------------------
+   Patterns lifted from Bear's stylesheet: uniform 0.2s ease-in-out motion,
+   large soft shadows, and colour-tinted (not neutral) shadows on primary
+   elements.
+-------------------------------------------------------------------------- */
+
+/* Gradient fill for primary actions. A flat block of indigo reads heavier
+   than the same colour with a slight violet lift. */
+.gradient-accent {
+  background-image: linear-gradient(135deg, var(--accent-fill) 0%, var(--accent-fill-2) 100%);
+}
+
+/* Faint brand wash used behind hero/empty areas so large blank regions feel
+   intentional rather than unfinished. */
+.wash-accent {
+  background-image:
+    radial-gradient(60rem 30rem at 15% -10%, color-mix(in srgb, var(--accent) 12%, transparent), transparent 60%),
+    radial-gradient(45rem 25rem at 95% 105%, color-mix(in srgb, var(--warm) 12%, transparent), transparent 60%);
+}
+
+/* Subtle lift on interactive cards. */
+.lift {
+  transition: transform 0.2s var(--ease-ui), box-shadow 0.2s var(--ease-ui);
+}
+.lift:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-pop);
+}
+
+@keyframes pulse-ring {
+  0%   { transform: scale(0.7); opacity: 0.5; }
+  70%  { transform: scale(2.4); opacity: 0; }
+  100% { transform: scale(2.4); opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

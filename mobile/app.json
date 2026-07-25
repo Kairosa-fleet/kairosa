@@ -1,0 +1,57 @@
+{
+  "expo": {
+    "name": "Fleet Tracking",
+    "slug": "fleet-tracking",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "scheme": "fleettracking",
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.fleettracking.app",
+      "infoPlist": {
+        "UIBackgroundModes": ["location"]
+      }
+    },
+    "android": {
+      "package": "com.fleettracking.app",
+      "adaptiveIcon": {
+        "backgroundColor": "#6366F1",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION",
+        "FOREGROUND_SERVICE",
+        "FOREGROUND_SERVICE_LOCATION",
+        "POST_NOTIFICATIONS",
+        "RECEIVE_BOOT_COMPLETED",
+        "WAKE_LOCK",
+        "REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Reports your location to dispatch while you are on duty. Tracking stops when you go off duty.",
+          "locationWhenInUsePermission": "Shows your position on the map while you are on duty.",
+          "isAndroidBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": true,
+          "isIosBackgroundLocationEnabled": true
+        }
+      ],
+      "expo-sqlite",
+      "expo-secure-store",
+      "expo-dev-client"
+    ]
+  }
+}

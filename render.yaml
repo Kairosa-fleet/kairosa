@@ -1,0 +1,57 @@
+# Render Blueprint — backend API (auto-deploys on push to `main`).
+#
+# What this defines: the FastAPI backend as a free Docker web service.
+# What it does NOT define: the database and Redis. Those are deliberately
+# EXTERNAL free services (Neon + Upstash) rather than Render's own, because
+# Render's free Postgres EXPIRES 30 days after creation — fine for a weekend,
+# useless for a testing phase. Neon's free Postgres is permanent and has
+# PostGIS, which this app requires. See DEPLOYMENT.md.
+#
+# Connect this repo in the Render dashboard (New → Blueprint) and Render reads
+# this file. Every push to `main` then redeploys automatically.
+
+services:
+  - type: web
+    name: fleet-backend
+    runtime: docker
+    repo: https://github.com/CHANGE_ME/CHANGE_ME   # your GitHub repo URL
+    branch: main
+    plan: free
+    region: singapore          # closest Render region to India
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    healthCheckPath: /health
+
+    # Two overrides of the Dockerfile's default command:
+    #   * bind to Render's injected $PORT (the Dockerfile hardcodes 8000)
+    #   * run DB migrations before the server starts. `alembic upgrade head`
+    #     is idempotent, so re-running it on every cold start is a safe no-op.
+    #     (Render's dedicated preDeployCommand is a paid feature; chaining it
+    #     into the start command is the free-tier equivalent.)
+    dockerCommand: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 2"
+
+    envVars:
+      - key: ENVIRONMENT
+        value: production        # hides /docs, switches off debug logging
+      - key: DEBUG
+        value: "false"
+      - key: OSRM_BASE_URL
+        value: https://router.project-osrm.org
+
+      # Render generates a strong secret once and keeps it — you never see or
+      # manage it, and it does not live in git.
+      - key: JWT_SECRET
+        generateValue: true
+
+      # sync:false = "I will paste this secret in the dashboard." Never commit
+      # these. See DEPLOYMENT.md for exactly where each value comes from.
+      - key: DATABASE_URL          # Neon connection string (must include ?sslmode=require)
+        sync: false
+      - key: REDIS_URL             # Upstash Redis URL (rediss://…)
+        sync: false
+      - key: CORS_ORIGINS          # your Vercel web URL, e.g. https://fleet.vercel.app
+        sync: false
+      - key: PUBLIC_WEB_URL        # same Vercel URL — baked into customer tracking links
+        sync: false
+      - key: MAPTILER_KEY          # your MapTiler key (server-side geocoding/routing proxy)
+        sync: false
