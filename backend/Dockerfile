@@ -23,9 +23,11 @@ USER appuser
 
 EXPOSE 8000
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD curl -fsS http://localhost:8000/health || exit 1
+# Check the port the app actually bound to ($PORT on a platform, else 8000).
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD curl -fsS "http://localhost:${PORT:-8000}/health" || exit 1
 
-# Workers > 1 is safe: all shared state is in Postgres/Redis, and WebSocket
-# fan-out goes through Redis pub/sub rather than process memory.
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]
+# Migrate, then serve — via a script so there is no inline-command quoting for
+# a platform's shell to mangle. Also binds $PORT, which managed platforms
+# (Render/Fly/Railway) inject and require. See start.sh.
+CMD ["sh", "start.sh"]

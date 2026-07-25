@@ -22,13 +22,10 @@ services:
     dockerContext: ./backend
     healthCheckPath: /health
 
-    # Two overrides of the Dockerfile's default command:
-    #   * bind to Render's injected $PORT (the Dockerfile hardcodes 8000)
-    #   * run DB migrations before the server starts. `alembic upgrade head`
-    #     is idempotent, so re-running it on every cold start is a safe no-op.
-    #     (Render's dedicated preDeployCommand is a paid feature; chaining it
-    #     into the start command is the free-tier equivalent.)
-    dockerCommand: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 2"
+    # No dockerCommand override on purpose. The image's own CMD (backend/start.sh)
+    # runs `alembic upgrade head` and then binds Render's injected $PORT. An
+    # inline `sh -c "…"` here gets re-wrapped by Render's shell and the nested
+    # quotes break — that is what caused the first deploy's "status 127".
 
     envVars:
       - key: ENVIRONMENT
