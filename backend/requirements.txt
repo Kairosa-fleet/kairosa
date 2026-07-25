@@ -31,3 +31,6 @@ orjson==3.10.13
 pytest==8.3.4
 pytest-asyncio==0.25.0
 ruff==0.8.6
+
+# --- Object storage (Cloudflare R2 / S3-compatible) for uploaded documents ---
+boto3==1.35.99

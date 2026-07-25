@@ -7,25 +7,27 @@ insurer — so the scan is stored alongside the number, not instead of it.
 Two rules shape everything here:
 
   * **The client never names a file.** Uploads are stored under a generated
-    UUID inside a directory named for the organization. A filename supplied by
-    a browser is attacker-controlled input, and joining it onto a path is how
-    directory traversal happens.
-  * **Reads are scoped by that directory, not by a check.** The download
-    handler resolves paths only within the caller's own organization folder,
-    so cross-tenant access is structurally impossible rather than merely
-    guarded against.
+    UUID, namespaced by organization id. A filename supplied by a browser is
+    attacker-controlled input, and joining it onto a path (or an object key) is
+    how traversal happens.
+  * **Reads are scoped to the caller's organization, not by a check.** The
+    download handler only ever asks storage for an object under the caller's
+    own org namespace, so cross-tenant access is structural, not a guard that
+    could be forgotten.
+
+The physical store — object storage in production, local disk in dev — lives
+behind ``app.services.storage``; this module is unchanged whichever is active.
 """
 
 from __future__ import annotations
 
 import uuid
-from pathlib import Path
 
-from fastapi import APIRouter, File, HTTPException, UploadFile, status
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, File, HTTPException, Response, UploadFile, status
 
 from app.api.deps import CurrentUser
 from app.core.config import settings
+from app.services import storage
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 
@@ -52,12 +54,6 @@ def _sniff(contents: bytes) -> tuple[str, str] | None:
     if contents[:4] == b"RIFF" and contents[8:12] == b"WEBP":
         return WEBP
     return None
-
-
-def _org_dir(organization_id) -> Path:
-    path = Path(settings.UPLOAD_DIR) / str(organization_id)
-    path.mkdir(parents=True, exist_ok=True)
-    return path
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
@@ -88,11 +84,11 @@ async def upload_document(user: CurrentUser, file: UploadFile = File(...)) -> di
     ext, media_type = sniffed
 
     stored_name = f"{uuid.uuid4()}.{ext}"
-    (_org_dir(user.organization_id) / stored_name).write_bytes(contents)
+    await storage.put(user.organization_id, stored_name, contents, media_type)
 
     return {
         "fileUrl": f"/v1/documents/{stored_name}",
-        # Kept for display only. It is never used to build a path.
+        # Kept for display only. It is never used to build a path or key.
         "fileName": (file.filename or f"upload.{ext}")[:200],
         "contentType": media_type,
         "sizeBytes": len(contents),
@@ -100,16 +96,15 @@ async def upload_document(user: CurrentUser, file: UploadFile = File(...)) -> di
 
 
 @router.get("/{stored_name}")
-async def get_document(stored_name: str, user: CurrentUser) -> FileResponse:
-    """Stream a stored PDF back. Authenticated, and scoped to the caller's org.
+async def get_document(stored_name: str, user: CurrentUser) -> Response:
+    """Return a stored document. Authenticated, and scoped to the caller's org.
 
-    Deliberately not a static mount: an insurance certificate carries the
-    policy number and the owner's address, and serving these from a public
-    directory would make every scan in the fleet world-readable to anyone who
-    guessed a name.
+    Deliberately not a public/static object: an insurance certificate carries
+    the policy number and the owner's address, so it is fetched with the
+    caller's credentials and streamed back — never handed out as a public URL.
     """
-    # Reject anything that is not a bare generated filename before it ever
-    # reaches the filesystem.
+    # Reject anything that is not a bare generated filename before it is used
+    # as a storage key.
     stem, _, ext = stored_name.rpartition(".")
     if "/" in stored_name or "\\" in stored_name or ext not in MEDIA_TYPES:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Document not found")
@@ -118,10 +113,17 @@ async def get_document(stored_name: str, user: CurrentUser) -> FileResponse:
     except ValueError:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Document not found") from None
 
-    org_dir = _org_dir(user.organization_id).resolve()
-    path = (org_dir / stored_name).resolve()
-    # Belt and braces: the resolved path must still sit inside the org folder.
-    if not path.is_file() or org_dir not in path.parents:
+    # Only ever asks storage for an object under this caller's own org — a
+    # different tenant's id is never supplied, so their files are unreachable.
+    data = await storage.get(user.organization_id, stored_name)
+    if data is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Document not found")
 
-    return FileResponse(path, media_type=MEDIA_TYPES[ext], filename=stored_name)
+    return Response(
+        content=data,
+        media_type=MEDIA_TYPES[ext],
+        headers={
+            "Content-Disposition": f'inline; filename="{stored_name}"',
+            "Cache-Control": "private, max-age=3600",
+        },
+    )

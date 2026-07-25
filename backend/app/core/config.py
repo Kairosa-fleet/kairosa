@@ -89,11 +89,22 @@ class Settings(BaseSettings):
     SMTP_STARTTLS: bool = True
 
     # --- Document storage ---
-    # Scanned RCs, insurance and permits live on disk rather than in the
-    # database: they are read rarely, streamed whole, and would bloat every
-    # backup of a table that is otherwise small and hot.
+    # Scanned RCs, insurance and permits live outside the database: they are
+    # read rarely, streamed whole, and would bloat every backup of a table that
+    # is otherwise small and hot.
+    #
+    # When the S3_* settings below are configured, uploads go to object storage
+    # (Cloudflare R2 or any S3-compatible service). This is required in
+    # production: a platform's local disk is ephemeral, so without it every
+    # redeploy wipes every uploaded document. With them unset, UPLOAD_DIR on
+    # local disk is used — fine for development and tests.
     UPLOAD_DIR: str = "uploads"
     MAX_UPLOAD_MB: int = 10
+    S3_ENDPOINT_URL: str = ""      # e.g. https://<accountid>.r2.cloudflarestorage.com
+    S3_BUCKET: str = ""
+    S3_ACCESS_KEY_ID: str = ""
+    S3_SECRET_ACCESS_KEY: str = ""
+    S3_REGION: str = "auto"        # R2's convention; real regions also accepted
 
     # --- Compliance ---
     DOC_EXPIRY_WARN_DAYS: int = 30

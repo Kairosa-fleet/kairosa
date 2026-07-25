@@ -126,14 +126,11 @@ Once the repos are connected there is nothing else to configure:
    noticeable but acceptable for testing. (Fix later: $7/mo Render Starter, or a
    cron ping every 14 min to keep it warm.)
 
-2. **Uploaded files do not persist. ← the one that matters.** Render's free
-   filesystem is ephemeral: every deploy (i.e. every push) and every spin-down
-   **wipes `backend/uploads/`** — all vehicle/driver document scans, LR PDFs and
-   e-way-bill images. The *records* survive in Neon; the *files* 404. For UI
-   testing this is livable; for testing the document features properly it is
-   not. **Fix: Cloudflare R2** (10 GB free, no egress fees, S3-compatible). This
-   needs a ~1 hour code change to `backend/app/api/v1/documents.py` to write to
-   R2 instead of local disk. Say the word and I'll wire it.
+2. **Uploaded files** — **now solved with Cloudflare R2** (see "Object
+   storage" below). Without R2 configured the backend falls back to local disk,
+   which on Render is ephemeral (every deploy wipes the scans); with the four
+   `S3_*` env vars set, uploads go to R2 and persist. Set them and this is a
+   non-issue.
 
 3. **Vercel Hobby is non-commercial only.** Their terms restrict Hobby to
    "non-commercial personal use." A testing phase with no payments and personal
@@ -145,6 +142,32 @@ Once the repos are connected there is nothing else to configure:
    first query. Negligible next to the Render cold start.
 
 ---
+
+## Object storage — Cloudflare R2 (persistent document uploads)
+
+Free: 10 GB storage, zero egress fees. This is what keeps vehicle/driver
+document scans, LR PDFs and e-way-bill images alive across redeploys. The app
+stores each object namespaced by organization and serves it back through the
+authenticated, org-scoped download endpoint — files are never public.
+
+1. Cloudflare dashboard → **R2** → **Create bucket** → name it
+   `kairosa-documents` (region: Automatic).
+2. R2 → **Manage R2 API Tokens** → **Create API token** → permission
+   **Object Read & Write**, scoped to that bucket → Create. Copy the
+   **Access Key ID** and **Secret Access Key** (shown once).
+3. On the R2 overview, note your **S3 API endpoint**:
+   `https://<accountid>.r2.cloudflarestorage.com`.
+4. In Render → kairosa-backend → Environment, set:
+
+   | Key | Value |
+   |---|---|
+   | `S3_ENDPOINT_URL` | `https://<accountid>.r2.cloudflarestorage.com` |
+   | `S3_BUCKET` | `kairosa-documents` |
+   | `S3_ACCESS_KEY_ID` | the Access Key ID |
+   | `S3_SECRET_ACCESS_KEY` | the Secret Access Key |
+
+   Save → Render redeploys. Uploads now persist. (Leave all four unset locally
+   and the app uses the disk under `UPLOAD_DIR` — no R2 account needed for dev.)
 
 ## Recommendation
 
