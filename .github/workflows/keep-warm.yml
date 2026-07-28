@@ -1,0 +1,50 @@
+# Keep the free Render backend warm.
+#
+# Render's free web service spins DOWN after 15 minutes with no traffic. The
+# next request then waits ~50 s while the container cold-starts, and the web
+# dashboard's fetch times out first — surfacing as "Cannot reach the server.
+# Check the backend is running and that this origin is allowed by CORS_ORIGINS."
+# Nothing is actually broken; the server is just asleep.
+#
+# This workflow pings /health every 10 minutes so the service never idles out.
+# 10 (not 14) because GitHub's scheduled runs are frequently delayed several
+# minutes, and we must land inside Render's 15-minute window every time.
+#
+# COST NOTE:
+#   * PUBLIC repo  -> Actions minutes are unlimited. Leave this on. Free.
+#   * PRIVATE repo -> scheduled runs count against the 2000 free min/month and a
+#     10-min ping (~4300 runs/mo) will blow through it. For a private repo,
+#     DISABLE this workflow (Actions tab -> Keep backend warm -> "..." -> Disable)
+#     and use an external pinger instead — see DEPLOYMENT.md "Keep-warm".
+#
+# GitHub auto-disables scheduled workflows after 60 days with no repo activity;
+# any push re-arms it.
+
+name: Keep backend warm
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"   # every 10 minutes (UTC)
+  workflow_dispatch: {}        # lets you trigger a ping by hand from the Actions tab
+
+# If a previous ping is somehow still running, don't stack another on top.
+concurrency:
+  group: keep-warm
+  cancel-in-progress: true
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Ping /health
+        run: |
+          url="https://kairosa-backend.onrender.com/health"
+          echo "Waking $url (a cold start can take ~50s)…"
+          # --max-time 90 gives the container time to cold-start; --retry rides
+          # out the wake. We only care that it eventually answers 200.
+          code=$(curl -sS -o /dev/null -w '%{http_code}' \
+                   --max-time 90 --retry 3 --retry-delay 15 --retry-all-errors \
+                   "$url")
+          echo "HTTP $code"
+          test "$code" = "200"

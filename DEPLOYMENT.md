@@ -122,9 +122,11 @@ Once the repos are connected there is nothing else to configure:
 ## What "free" costs you (read this)
 
 1. **Backend cold starts.** Render free spins the API down after 15 min idle;
-   the next request waits ~50 s while it wakes. For a live-tracking app that is
-   noticeable but acceptable for testing. (Fix later: $7/mo Render Starter, or a
-   cron ping every 14 min to keep it warm.)
+   the next request waits ~50 s while it wakes, and the dashboard's fetch times
+   out first — showing *"Cannot reach the server… CORS_ORIGINS"* even though
+   nothing is broken and CORS is fine. **This is handled by the keep-warm ping —
+   see the "Keep-warm" section below.** (Permanent fix: $7/mo Render Starter,
+   which never sleeps.)
 
 2. **Uploaded files** — **now solved with Cloudflare R2** (see "Object
    storage" below). Without R2 configured the backend falls back to local disk,
@@ -140,6 +142,41 @@ Once the repos are connected there is nothing else to configure:
 
 4. **Neon/Upstash scale to zero** after ~5 min idle too, adding ~0.5 s to the
    first query. Negligible next to the Render cold start.
+
+---
+
+## Keep-warm — stop the "Cannot reach the server" cold start
+
+The free Render service sleeps after 15 min idle. The first request afterwards
+waits ~50 s for a cold start; the dashboard gives up before it answers and shows
+*"Cannot reach the server. Check the backend is running and that this origin is
+allowed by CORS_ORIGINS."* The backend and CORS are fine — it was just asleep.
+A reload once it's awake proves it. The permanent testing-phase fix is to ping
+`/health` every ~10 minutes so it never idles out.
+
+Pick **one** of these (do not run both):
+
+### Option A — GitHub Actions (in the repo, zero setup) — **use if the repo is public**
+
+`.github/workflows/keep-warm.yml` is already committed. It pings `/health` every
+10 minutes and can be run by hand from the **Actions** tab (**Keep backend warm →
+Run workflow**). On a **public** repo Actions minutes are unlimited — nothing to
+do, it just works after you push.
+
+> **Private repo?** A 10-min schedule (~4,300 runs/month) blows through the
+> 2,000 free Actions-minutes/month. **Disable this workflow** (Actions → *Keep
+> backend warm* → ••• → **Disable workflow**) and use Option B instead.
+
+### Option B — External pinger (free, works on any repo, more reliable)
+
+GitHub's scheduled runs are often delayed several minutes; a dedicated uptime
+pinger is more punctual and costs nothing:
+
+1. Go to **cron-job.org** (free) — or UptimeRobot.
+2. Create a cronjob → URL `https://kairosa-backend.onrender.com/health`,
+   schedule **every 10 minutes**, method GET.
+3. Save. Done — it keeps the backend warm 24/7 and doesn't touch your GitHub
+   minutes.
 
 ---
 

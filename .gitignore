@@ -36,3 +36,6 @@ mobile/GoogleService-Info.plist
 .vscode/
 referenceui.txt
 KAIROSA_V1.md
+
+# Local backups — archives contain .env and KAIROSA_V1.md (live credentials)
+backup/
