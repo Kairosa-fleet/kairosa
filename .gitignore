@@ -39,3 +39,6 @@ KAIROSA_V1.md
 
 # Local backups — archives contain .env and KAIROSA_V1.md (live credentials)
 backup/
+
+# Personal idea references (videos etc.) — not repo content
+ideas/

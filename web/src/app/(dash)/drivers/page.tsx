@@ -8,10 +8,12 @@ import { useState } from "react";
 
 import { Button, Card, EmptyState, ErrorNote, Input, Spinner, StatusBadge } from "@/components/ui";
 import { AuthedImage, openAuthedFile } from "@/components/AuthedFile";
+import { DraftBanner, DraftSavedHint } from "@/components/DraftBanner";
 import {
   DocumentUpload, EMPTY_DOC, PhotoUpload, type DocDraft,
 } from "@/components/DocumentUpload";
 import { api } from "@/lib/api";
+import { clearFormDraft, DRAFT_KEYS, useFormDraft } from "@/lib/formDraft";
 import { cn } from "@/lib/format";
 import type { DriverDocType, DriverFull } from "@/lib/types";
 
@@ -60,6 +62,7 @@ export default function DriversPage() {
   const create = useMutation({
     mutationFn: (body: unknown) => api.createDriverFull(body),
     onSuccess: (created) => {
+      clearFormDraft(DRAFT_KEYS.driver);
       queryClient.invalidateQueries({ queryKey: ["drivers-full"] });
       queryClient.invalidateQueries({ queryKey: ["alerts"] });
       setShowForm(false);
@@ -415,6 +418,14 @@ function DriverCard({ driver, onEdit }: { driver: DriverFull; onEdit: () => void
   );
 }
 
+/** A blank create form — seeds the fields and resets them on Clear. */
+const INITIAL_DRIVER_FORM = {
+  fullName: "", phone: "", employeeCode: "", licenceNumber: "", licenceClass: "HMV",
+  licenceIssuingRto: "", licenceExpiresOn: "", dateOfBirth: "", bloodGroup: "",
+  address: "", emergencyContactName: "", emergencyContactPhone: "", aadhaarLast4: "",
+  panNumber: "", joinedOn: "",
+};
+
 function DriverForm({
   busy,
   existing,
@@ -475,6 +486,61 @@ function DriverForm({
   const set = (k: string, v: string) => setF((s) => ({ ...s, [k]: v }));
   const patchDoc = (type: string, patch: Partial<DocDraft>) =>
     setDocs((d) => ({ ...d, [type]: { ...(d[type] ?? EMPTY_DOC), ...patch } }));
+
+  /* --- Draft persistence -------------------------------------------------
+     Keeps this in-progress driver (fields, photo, licence and document
+     references) on the device so a closed tab, a refresh, or switching to the
+     vehicle screen does not lose it. New drivers only — an edit is seeded from
+     the server. */
+  const stripDoc = (d: DocDraft) => ({
+    number: d.number, expiresOn: d.expiresOn, fileUrl: d.fileUrl, fileName: d.fileName,
+  });
+  const draft = useFormDraft({
+    key: DRAFT_KEYS.driver,
+    enabled: !existing,
+    value: {
+      f,
+      photo,
+      licence: stripDoc(licence),
+      docs: Object.fromEntries(Object.entries(docs).map(([t, d]) => [t, stripDoc(d)])),
+    },
+    isEmpty: (v) => {
+      const g = v.f;
+      const typed = [
+        g.fullName, g.phone, g.employeeCode, g.licenceNumber, g.licenceIssuingRto,
+        g.licenceExpiresOn, g.dateOfBirth, g.bloodGroup, g.address, g.emergencyContactName,
+        g.emergencyContactPhone, g.aadhaarLast4, g.panNumber, g.joinedOn,
+      ].some((x) => (x ?? "").trim() !== "");
+      const lic = (v.licence.number ?? "").trim() !== "" || !!v.licence.fileUrl;
+      const docsTouched = Object.values(v.docs).some(
+        (d) => (d.number ?? "").trim() !== "" || !!d.fileUrl,
+      );
+      return !typed && !lic && !v.photo.fileUrl && !docsTouched;
+    },
+  });
+
+  function restoreDraft() {
+    const data = draft.restore();
+    if (!data) return;
+    setF(data.f);
+    setPhoto(data.photo);
+    setLicence({ ...EMPTY_DOC, ...data.licence, uploading: false, error: null });
+    setDocs(
+      Object.fromEntries(
+        Object.entries(data.docs).map(([t, d]) => [
+          t, { ...EMPTY_DOC, ...d, uploading: false, error: null },
+        ]),
+      ),
+    );
+  }
+
+  function clearForm() {
+    setF(INITIAL_DRIVER_FORM as typeof f);
+    setPhoto({ fileUrl: "", fileName: "" });
+    setLicence({ ...EMPTY_DOC });
+    setDocs({});
+    draft.clear();
+  }
 
   async function upload(file: File | undefined, apply: (r: Partial<DocDraft>) => void) {
     if (!file) return;
@@ -539,6 +605,14 @@ function DriverForm({
   return (
     <Card className="mb-4">
       <form onSubmit={submit} className="space-y-5">
+        {draft.found && (
+          <DraftBanner
+            savedAt={draft.found.savedAt}
+            noun="driver entry"
+            onRestore={restoreDraft}
+            onDiscard={draft.discard}
+          />
+        )}
         <div>
           <h3 className="mb-3 text-base font-semibold">
             {existing ? `Edit ${existing.fullName}` : "Personal"}
@@ -678,7 +752,7 @@ function DriverForm({
           </div>
         )}
 
-        <div className="flex gap-2 border-t border-[var(--stroke)] pt-4">
+        <div className="flex flex-wrap items-center gap-2 border-t border-[var(--stroke)] pt-4">
           <Button
             type="submit"
             loading={busy}
@@ -687,6 +761,10 @@ function DriverForm({
             {existing ? "Save changes" : "Save driver"}
           </Button>
           <Button type="button" variant="secondary" onClick={onCancel}>Cancel</Button>
+          {!existing && (
+            <Button type="button" variant="ghost" onClick={clearForm}>Clear form</Button>
+          )}
+          {draft.active && <span className="ml-auto"><DraftSavedHint /></span>}
         </div>
       </form>
     </Card>

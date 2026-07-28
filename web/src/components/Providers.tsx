@@ -3,6 +3,9 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useState } from "react";
 
+import { OfflineBanner } from "@/components/OfflineBanner";
+import { ServiceWorkerRegistrar } from "@/components/ServiceWorkerRegistrar";
+
 /**
  * React Query owns all server state.
  *
@@ -25,10 +28,26 @@ export function Providers({ children }: { children: React.ReactNode }) {
               return failureCount < 2;
             },
             refetchOnWindowFocus: true,
+            // Run the fetch even when the browser reports offline: the service
+            // worker answers GETs from its cache, so a reload with no network
+            // still shows the last loaded lists instead of an empty spinner.
+            networkMode: "always",
+          },
+          mutations: {
+            // Fail a write immediately when offline rather than silently
+            // replaying it on reconnect — a booking or upload must be a
+            // deliberate act, and the draft keeps the entry safe meanwhile.
+            networkMode: "always",
           },
         },
       }),
   );
 
-  return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+  return (
+    <QueryClientProvider client={client}>
+      <ServiceWorkerRegistrar />
+      <OfflineBanner />
+      {children}
+    </QueryClientProvider>
+  );
 }

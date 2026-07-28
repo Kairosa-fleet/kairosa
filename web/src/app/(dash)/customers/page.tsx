@@ -5,8 +5,10 @@ import { Building2, Mail, MapPin, Pencil, Phone, Plus, Trash2 } from "lucide-rea
 import { useState } from "react";
 
 import { AddressPicker, type PickedAddress } from "@/components/AddressPicker";
+import { DraftBanner, DraftSavedHint } from "@/components/DraftBanner";
 import { Button, Card, EmptyState, ErrorNote, Input, Spinner } from "@/components/ui";
 import { api } from "@/lib/api";
+import { clearFormDraft, DRAFT_KEYS, useFormDraft } from "@/lib/formDraft";
 import type { Customer, CustomerAddress } from "@/lib/types";
 
 export default function CustomersPage() {
@@ -18,6 +20,7 @@ export default function CustomersPage() {
   const create = useMutation({
     mutationFn: (body: unknown) => api.createCustomer(body),
     onSuccess: () => {
+      clearFormDraft(DRAFT_KEYS.customer);
       queryClient.invalidateQueries({ queryKey: ["customers"] });
       setShowForm(false);
     },
@@ -319,6 +322,34 @@ function CustomerForm({
   const [address, setAddress] = useState<PickedAddress | null>(null);
   const set = (k: string, v: string) => setF((s) => ({ ...s, [k]: v }));
 
+  /* --- Draft persistence — new customers only (an edit is seeded from the
+     server). Keeps the typed details and the picked location on the device so
+     a closed tab, refresh, or screen switch does not lose them. */
+  const draft = useFormDraft({
+    key: DRAFT_KEYS.customer,
+    enabled: !existing,
+    value: { f, addressLabel, address },
+    isEmpty: (v) =>
+      !Object.values(v.f).some((x) => (x ?? "").trim() !== "") &&
+      (v.addressLabel ?? "").trim() === "" &&
+      v.address === null,
+  });
+
+  function restoreDraft() {
+    const data = draft.restore();
+    if (!data) return;
+    setF(data.f);
+    setAddressLabel(data.addressLabel);
+    setAddress(data.address);
+  }
+
+  function clearForm() {
+    setF({ name: "", contactPerson: "", phone: "", altPhone: "", email: "", gstin: "" });
+    setAddressLabel("");
+    setAddress(null);
+    draft.clear();
+  }
+
   function submit(e: React.FormEvent) {
     e.preventDefault();
     const details = {
@@ -348,6 +379,14 @@ function CustomerForm({
   return (
     <Card className="mb-4">
       <form onSubmit={submit} className="space-y-5">
+        {draft.found && (
+          <DraftBanner
+            savedAt={draft.found.savedAt}
+            noun="customer entry"
+            onRestore={restoreDraft}
+            onDiscard={draft.discard}
+          />
+        )}
         <div>
           <h3 className="mb-3 text-base font-semibold">
             {existing ? `Edit ${existing.name}` : "Customer"}
@@ -376,9 +415,13 @@ function CustomerForm({
           </p>
         )}
 
-        <div className="flex gap-2 border-t border-[var(--stroke)] pt-4">
+        <div className="flex flex-wrap items-center gap-2 border-t border-[var(--stroke)] pt-4">
           <Button type="submit" loading={busy}>{existing ? "Save changes" : "Save customer"}</Button>
           <Button type="button" variant="secondary" onClick={onCancel}>Cancel</Button>
+          {!existing && (
+            <Button type="button" variant="ghost" onClick={clearForm}>Clear form</Button>
+          )}
+          {draft.active && <span className="ml-auto"><DraftSavedHint /></span>}
         </div>
       </form>
     </Card>

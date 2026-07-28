@@ -8,10 +8,12 @@ import { useState } from "react";
 
 import { Button, Card, EmptyState, ErrorNote, Input, Spinner, StatusBadge } from "@/components/ui";
 import { AuthedImage, openAuthedFile } from "@/components/AuthedFile";
+import { DraftBanner, DraftSavedHint } from "@/components/DraftBanner";
 import {
   DocumentUpload, EMPTY_DOC, shrinkImage, type DocDraft,
 } from "@/components/DocumentUpload";
 import { api } from "@/lib/api";
+import { clearFormDraft, DRAFT_KEYS, useFormDraft } from "@/lib/formDraft";
 import { cn } from "@/lib/format";
 import type { Vehicle, VehicleDoc, VehicleDocType, VehicleImage } from "@/lib/types";
 
@@ -70,7 +72,11 @@ export default function VehiclesPage() {
 
   const create = useMutation({
     mutationFn: (body: unknown) => api.createVehicle(body),
-    onSuccess: done,
+    onSuccess: () => {
+      // The vehicle is now the backend's record of truth — retire its draft.
+      clearFormDraft(DRAFT_KEYS.vehicle);
+      done();
+    },
   });
 
   const update = useMutation({
@@ -273,6 +279,13 @@ function VehicleCard({ vehicle, onEdit }: { vehicle: Vehicle; onEdit: () => void
   );
 }
 
+/** A blank create form — used to seed the fields and to reset them on Clear. */
+const INITIAL_VEHICLE_FORM = {
+  registrationNumber: "", displayName: "", vehicleType: "truck", make: "", model: "",
+  manufactureYear: "", bodyType: "", capacityKg: "", chassisNumber: "", engineNumber: "",
+  fuelType: "Diesel",
+};
+
 function VehicleForm({
   busy,
   existing,
@@ -323,6 +336,61 @@ function VehicleForm({
   const set = (k: string, v: string) => setForm((f) => ({ ...f, [k]: v }));
   const patchDoc = (type: string, patch: Partial<DocDraft>) =>
     setDocs((d) => ({ ...d, [type]: { ...(d[type] ?? EMPTY_DOC), ...patch } }));
+
+  /* --- Draft persistence -------------------------------------------------
+     Autosaves this in-progress entry to the browser so closing the tab,
+     refreshing, or switching to the driver screen never loses it. Only for a
+     new vehicle — an edit is seeded from the server and must not be autosaved
+     over. Uploaded scans are kept by reference (the file already lives on the
+     server), minus the transient uploading/error flags. */
+  const draft = useFormDraft({
+    key: DRAFT_KEYS.vehicle,
+    enabled: !existing,
+    value: {
+      form,
+      docs: Object.fromEntries(
+        Object.entries(docs).map(([type, d]) => [
+          type,
+          { number: d.number, expiresOn: d.expiresOn, fileUrl: d.fileUrl, fileName: d.fileName },
+        ]),
+      ),
+      images,
+    },
+    isEmpty: (v) => {
+      const f = v.form;
+      const typed = [
+        f.registrationNumber, f.displayName, f.make, f.model, f.manufactureYear,
+        f.bodyType, f.capacityKg, f.chassisNumber, f.engineNumber,
+      ].some((x) => (x ?? "").trim() !== "");
+      const docsTouched = Object.values(v.docs).some(
+        (d) => (d.number ?? "").trim() !== "" || !!d.fileUrl,
+      );
+      return !typed && !docsTouched && v.images.length === 0;
+    },
+  });
+
+  function restoreDraft() {
+    const data = draft.restore();
+    if (!data) return;
+    setForm(data.form);
+    setDocs(
+      Object.fromEntries(
+        Object.entries(data.docs).map(([type, d]) => [
+          type,
+          { ...EMPTY_DOC, ...d, uploading: false, error: null },
+        ]),
+      ),
+    );
+    setImages(data.images);
+  }
+
+  function clearForm() {
+    setForm(INITIAL_VEHICLE_FORM as typeof form);
+    setDocs({});
+    setImages([]);
+    setImageError(null);
+    draft.clear();
+  }
 
   /* The scan is uploaded the moment it is chosen rather than on submit, so a
      rejected file is reported next to that row while the operator is still
@@ -419,6 +487,14 @@ function VehicleForm({
   return (
     <Card className="mb-4">
       <form onSubmit={submit} className="space-y-5">
+        {draft.found && (
+          <DraftBanner
+            savedAt={draft.found.savedAt}
+            noun="vehicle entry"
+            onRestore={restoreDraft}
+            onDiscard={draft.discard}
+          />
+        )}
         <div>
           <h3 className="mb-3 text-base font-semibold">
             {existing ? `Edit ${existing.registrationNumber}` : "Vehicle details"}
@@ -631,7 +707,7 @@ function VehicleForm({
           </div>
         )}
 
-        <div className="flex gap-2 border-t border-[var(--stroke)] pt-4">
+        <div className="flex flex-wrap items-center gap-2 border-t border-[var(--stroke)] pt-4">
           <Button
             type="submit"
             loading={busy}
@@ -640,6 +716,10 @@ function VehicleForm({
             {existing ? "Save changes" : "Save vehicle"}
           </Button>
           <Button type="button" variant="secondary" onClick={onCancel}>Cancel</Button>
+          {!existing && (
+            <Button type="button" variant="ghost" onClick={clearForm}>Clear form</Button>
+          )}
+          {draft.active && <span className="ml-auto"><DraftSavedHint /></span>}
         </div>
       </form>
     </Card>

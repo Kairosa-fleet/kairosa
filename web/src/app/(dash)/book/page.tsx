@@ -7,8 +7,10 @@ import { useEffect, useState } from "react";
 
 import { AddressPicker, type PickedAddress } from "@/components/AddressPicker";
 import { Button, Card, ErrorNote, Input, Spinner, StatusBadge } from "@/components/ui";
+import { DraftBanner, DraftSavedHint } from "@/components/DraftBanner";
 import { DocumentUpload, EMPTY_DOC, type DocDraft } from "@/components/DocumentUpload";
 import { api } from "@/lib/api";
+import { clearFormDraft, DRAFT_KEYS, useFormDraft } from "@/lib/formDraft";
 import { cn } from "@/lib/format";
 import type { BookingResultData, Customer, RouteOption } from "@/lib/types";
 
@@ -68,6 +70,69 @@ export default function BookPage() {
   const [notifyOnCreate, setNotifyOnCreate] = useState(false);
   const [debouncedLr, setDebouncedLr] = useState("");
 
+  /* --- Draft persistence -------------------------------------------------
+     A booking is the longest form in the app: two parties, goods, statutory
+     documents, freight and a trip. Autosaving it to the device means closing
+     the tab, refreshing, or leaving to add a missing vehicle never discards the
+     work. Defaults (the schedule, route choice, package unit) are ignored when
+     deciding whether anything has actually been entered. */
+  const stripDoc = (d: DocDraft) => ({
+    number: d.number, expiresOn: d.expiresOn, fileUrl: d.fileUrl, fileName: d.fileName,
+  });
+  const draft = useFormDraft({
+    key: DRAFT_KEYS.booking,
+    enabled: true,
+    value: {
+      useOwnLr, ownLr,
+      consignorId, consignorAddressId, consigneeId, consigneeAddressId,
+      goods, statutory,
+      ewayDoc: stripDoc(ewayDoc), invoiceDoc: stripDoc(invoiceDoc),
+      freight, vehicleId, driverId, deviceId, scheduledStart, notes,
+      routeIndex, notifyOnCreate,
+    },
+    isEmpty: (v) => {
+      const touched =
+        v.consignorId || v.consignorAddressId || v.consigneeId || v.consigneeAddressId ||
+        v.ownLr.trim() || v.notes.trim() ||
+        v.goods.goodsDescription.trim() || v.goods.hsnCode.trim() ||
+        v.goods.packageCount.trim() || v.goods.weightKg.trim() || v.goods.declaredValue.trim() ||
+        v.statutory.ewayBillNumber.trim() || v.statutory.ewayBillValidUntil ||
+        v.statutory.invoiceNumber.trim() || v.statutory.invoiceDate ||
+        v.freight.freightAmount.trim() || v.freight.advanceAmount.trim() ||
+        v.vehicleId || v.driverId || v.deviceId ||
+        v.ewayDoc.fileUrl || v.invoiceDoc.fileUrl;
+      return !touched;
+    },
+  });
+
+  function restoreDraft() {
+    const d = draft.restore();
+    if (!d) return;
+    setUseOwnLr(d.useOwnLr); setOwnLr(d.ownLr);
+    setConsignorId(d.consignorId); setConsignorAddressId(d.consignorAddressId);
+    setConsigneeId(d.consigneeId); setConsigneeAddressId(d.consigneeAddressId);
+    setGoods(d.goods); setStatutory(d.statutory);
+    setEwayDoc({ ...EMPTY_DOC, ...d.ewayDoc, uploading: false, error: null });
+    setInvoiceDoc({ ...EMPTY_DOC, ...d.invoiceDoc, uploading: false, error: null });
+    setFreight(d.freight);
+    setVehicleId(d.vehicleId); setDriverId(d.driverId); setDeviceId(d.deviceId);
+    setScheduledStart(d.scheduledStart); setNotes(d.notes);
+    setRouteIndex(d.routeIndex); setNotifyOnCreate(d.notifyOnCreate);
+  }
+
+  function clearForm() {
+    setUseOwnLr(false); setOwnLr("");
+    setConsignorId(""); setConsignorAddressId(""); setConsigneeId(""); setConsigneeAddressId("");
+    setGoods({ goodsDescription: "", hsnCode: "", packageCount: "", packageType: "Boxes", weightKg: "", declaredValue: "" });
+    setStatutory({ ewayBillNumber: "", ewayBillValidUntil: "", invoiceNumber: "", invoiceDate: "" });
+    setEwayDoc(EMPTY_DOC); setInvoiceDoc(EMPTY_DOC);
+    setFreight({ freightTerms: "to_pay", freightAmount: "", advanceAmount: "" });
+    setVehicleId(""); setDriverId(""); setDeviceId("");
+    setScheduledStart(tomorrowAt()); setNotes("");
+    setRouteIndex(0); setNotifyOnCreate(false);
+    draft.clear();
+  }
+
   const customerList = customers.data ?? [];
   const consignor = customerList.find((c) => c.id === consignorId);
   const consignee = customerList.find((c) => c.id === consigneeId);
@@ -104,7 +169,11 @@ export default function BookPage() {
   });
   const lrCheck = lrCheckQuery.data ?? null;
 
-  const book = useMutation({ mutationFn: (body: unknown) => api.createBooking(body) });
+  const book = useMutation({
+    mutationFn: (body: unknown) => api.createBooking(body),
+    // The consignment is now booked — drop its draft so a fresh visit starts clean.
+    onSuccess: () => clearFormDraft(DRAFT_KEYS.booking),
+  });
 
   const ready =
     consignorId && consignorAddressId && consigneeId && consigneeAddressId &&
@@ -153,7 +222,17 @@ export default function BookPage() {
   if (customers.isPending || vehicles.isPending) return <Spinner label="Loading…" />;
 
   if (book.isSuccess) {
-    return <BookingResult result={book.data} onAnother={() => book.reset()} />;
+    return (
+      <BookingResult
+        result={book.data}
+        onAnother={() => {
+          // Start genuinely fresh: clear the fields (and any draft) so the next
+          // consignment isn't pre-filled with the one just booked.
+          clearForm();
+          book.reset();
+        }}
+      />
+    );
   }
 
   const declared = Number(goods.declaredValue || 0);
@@ -170,6 +249,14 @@ export default function BookPage() {
       {book.error && <div className="mb-4"><ErrorNote>{(book.error as Error).message}</ErrorNote></div>}
 
       <form onSubmit={submit} className="space-y-4">
+        {draft.found && (
+          <DraftBanner
+            savedAt={draft.found.savedAt}
+            noun="consignment booking"
+            onRestore={restoreDraft}
+            onDiscard={draft.discard}
+          />
+        )}
         {/* --- LR number --- */}
         <Card className="space-y-3">
           <h3 className="text-base font-semibold">Consignment number</h3>
@@ -394,12 +481,14 @@ export default function BookPage() {
           </label>
         </Card>
 
-        <div className="flex gap-2 pb-8">
+        <div className="flex flex-wrap items-center gap-2 pb-8">
           <Button type="submit" loading={book.isPending} disabled={!ready}>
             <Truck size={16} aria-hidden />
             Book consignment
           </Button>
           <Link href="/trips"><Button type="button" variant="secondary">Cancel</Button></Link>
+          <Button type="button" variant="ghost" onClick={clearForm}>Clear form</Button>
+          {draft.active && <span className="ml-auto"><DraftSavedHint /></span>}
         </div>
       </form>
     </div>
