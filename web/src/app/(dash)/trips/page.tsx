@@ -9,6 +9,8 @@ import Link from "next/link";
 import { useState } from "react";
 
 import { Button, Card, EmptyState, ErrorNote, Input, Spinner, StatusBadge } from "@/components/ui";
+import { ErrorSummary, type SummaryItem } from "@/components/ErrorSummary";
+import { type FieldErrors, focusField, parseApiError, withoutKey } from "@/lib/formErrors";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/format";
 import type { TripRow } from "@/lib/types";
@@ -288,6 +290,8 @@ function TripEditor({ trip, onDone }: { trip: TripRow; onDone: () => void }) {
   const [driverId, setDriverId] = useState(trip.driverId ?? "");
   const [start, setStart] = useState(toLocalInput(trip.scheduledStart));
   const [notes, setNotes] = useState(trip.notes ?? "");
+  const [errors, setErrors] = useState<FieldErrors>({});
+  const [general, setGeneral] = useState<string[]>([]);
 
   const save = useMutation({
     mutationFn: () =>
@@ -302,6 +306,36 @@ function TripEditor({ trip, onDone }: { trip: TripRow; onDone: () => void }) {
       onDone();
     },
   });
+
+  const summaryItems: SummaryItem[] = [
+    ...(errors.editStart ? [{ field: "editStart", message: errors.editStart }] : []),
+    ...general.map((message) => ({ message })),
+  ];
+
+  async function doSave() {
+    setGeneral([]);
+    if (!start) {
+      setErrors({ editStart: "Set the scheduled start date and time." });
+      focusField("editStart");
+      return;
+    }
+    setErrors({});
+    try {
+      await save.mutateAsync();
+    } catch (err) {
+      // Most likely a double-booking clash — the message names the conflict.
+      const parsed = parseApiError(err);
+      const mapped: FieldErrors = {};
+      const gen: string[] = [];
+      for (const [k, msg] of Object.entries(parsed.fields)) {
+        if (k.endsWith("scheduledStart")) mapped.editStart = msg;
+        else gen.push(msg);
+      }
+      setErrors(mapped);
+      setGeneral(parsed.general.concat(gen));
+      if (mapped.editStart) focusField("editStart");
+    }
+  }
 
   return (
     <div className="space-y-3 rounded-[var(--radius-control)] border border-[var(--accent)] bg-[var(--accent-soft)] p-3">
@@ -338,7 +372,8 @@ function TripEditor({ trip, onDone }: { trip: TripRow; onDone: () => void }) {
           name="editStart"
           type="datetime-local"
           value={start}
-          onChange={(e) => setStart(e.target.value)}
+          onChange={(e) => { setStart(e.target.value); setErrors((x) => withoutKey(x, "editStart")); }}
+          error={errors.editStart}
         />
         <Input
           label="Notes for the driver"
@@ -351,9 +386,9 @@ function TripEditor({ trip, onDone }: { trip: TripRow; onDone: () => void }) {
         Changing the driver moves the trip to their phone. The tracking links
         the customers already hold keep working.
       </p>
-      {save.error && <ErrorNote>{(save.error as Error).message}</ErrorNote>}
+      <ErrorSummary items={summaryItems} />
       <div className="flex gap-2">
-        <Button size="sm" loading={save.isPending} onClick={() => save.mutate()}>
+        <Button size="sm" loading={save.isPending} onClick={doSave}>
           Save changes
         </Button>
         <Button size="sm" variant="secondary" onClick={onDone}>Cancel</Button>

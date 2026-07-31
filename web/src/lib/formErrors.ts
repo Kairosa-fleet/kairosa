@@ -80,3 +80,30 @@ export function withoutKey(errors: FieldErrors, key: string): FieldErrors {
   delete rest[key];
   return rest;
 }
+
+/* --- Format validators -------------------------------------------------- */
+/* Shared so the same rule (and message) is applied wherever a GSTIN, PAN,
+   pincode or email is entered. All are lenient about surrounding whitespace and
+   case; each returns true for an EMPTY string so callers decide separately
+   whether a field is required — "optional but must be well-formed if present". */
+
+export const isEmail = (v: string): boolean =>
+  v.trim() === "" || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim());
+
+// 2-digit state code, 5-letter PAN block, 4 digits, 1 letter, 1 entity char,
+// 'Z', 1 checksum char — the standard 15-character GSTIN shape.
+export const isGstin = (v: string): boolean =>
+  v.trim() === "" || /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][0-9A-Z]Z[0-9A-Z]$/.test(v.trim().toUpperCase());
+
+// 5 letters, 4 digits, 1 letter.
+export const isPan = (v: string): boolean =>
+  v.trim() === "" || /^[A-Z]{5}[0-9]{4}[A-Z]$/.test(v.trim().toUpperCase());
+
+// Indian PIN: 6 digits, first non-zero.
+export const isPincode = (v: string): boolean =>
+  v.trim() === "" || /^[1-9][0-9]{5}$/.test(v.trim());
+
+// Deliberately loose — Indian mobile/landline with or without +91, spaces or
+// dashes. We only insist there are at least 10 digits in there somewhere.
+export const isPhone = (v: string): boolean =>
+  v.trim() === "" || v.replace(/\D/g, "").length >= 10;

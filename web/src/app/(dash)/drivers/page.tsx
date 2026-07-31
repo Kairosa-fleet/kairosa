@@ -15,7 +15,7 @@ import {
 } from "@/components/DocumentUpload";
 import { api } from "@/lib/api";
 import { clearFormDraft, DRAFT_KEYS, useFormDraft } from "@/lib/formDraft";
-import { type FieldErrors, focusField, parseApiError, withoutKey } from "@/lib/formErrors";
+import { type FieldErrors, focusField, isPan, isPhone, parseApiError, withoutKey } from "@/lib/formErrors";
 import { cn } from "@/lib/format";
 import type { DriverDocType, DriverFull } from "@/lib/types";
 
@@ -583,7 +583,8 @@ function DriverForm({
     licence.uploading || Object.values(docs).some((d) => d.uploading);
 
   const ERROR_ORDER = [
-    "fullName", "licenceNumber", "licenceExpiresOn", "docfile-licence",
+    "fullName", "phone", "aadhaarLast4", "panNumber",
+    "licenceNumber", "licenceExpiresOn", "docfile-licence",
     ...DOC_FIELDS.flatMap((field) => [`d-${field.type}`, `de-${field.type}`, `docfile-${field.type}`]),
   ];
 
@@ -591,6 +592,10 @@ function DriverForm({
   function validate(): FieldErrors {
     const e: FieldErrors = {};
     if (!f.fullName.trim()) e.fullName = "Full name is required.";
+    if (f.phone.trim() && !isPhone(f.phone)) e.phone = "Enter a valid phone number (at least 10 digits).";
+    if (f.panNumber.trim() && !isPan(f.panNumber)) e.panNumber = "That isn't a valid PAN (e.g. ABCDE1234F).";
+    if (f.aadhaarLast4.trim() && !/^\d{4}$/.test(f.aadhaarLast4.trim()))
+      e.aadhaarLast4 = "Enter only the last 4 digits of the Aadhaar.";
     if (!f.licenceNumber.trim()) e.licenceNumber = "Licence number is required.";
     if (!f.licenceExpiresOn) e.licenceExpiresOn = "Licence expiry date is required.";
     if (!licence.fileUrl) e["docfile-licence"] = "Attach the driving-licence scan.";
@@ -742,10 +747,11 @@ function DriverForm({
               name="aadhaarLast4"
               value={f.aadhaarLast4}
               onChange={(e) => set("aadhaarLast4", e.target.value)}
+              error={errors.aadhaarLast4}
               placeholder="9012"
               hint="Only the last 4 are stored — full Aadhaar is deliberately not kept"
             />
-            <Input label="PAN" name="panNumber" value={f.panNumber} onChange={(e) => set("panNumber", e.target.value.toUpperCase())} placeholder="ABCDE1234F" />
+            <Input label="PAN" name="panNumber" value={f.panNumber} onChange={(e) => set("panNumber", e.target.value.toUpperCase())} error={errors.panNumber} placeholder="ABCDE1234F" />
             <Input label="Emergency contact name" name="emergencyContactName" value={f.emergencyContactName} onChange={(e) => set("emergencyContactName", e.target.value)} />
             <Input label="Emergency contact phone" name="emergencyContactPhone" value={f.emergencyContactPhone} onChange={(e) => set("emergencyContactPhone", e.target.value)} inputMode="tel" />
           </div>

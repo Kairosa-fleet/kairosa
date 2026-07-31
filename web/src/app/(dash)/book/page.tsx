@@ -12,7 +12,9 @@ import { ErrorSummary, type SummaryItem } from "@/components/ErrorSummary";
 import { DocumentUpload, EMPTY_DOC, type DocDraft } from "@/components/DocumentUpload";
 import { api } from "@/lib/api";
 import { clearFormDraft, DRAFT_KEYS, useFormDraft } from "@/lib/formDraft";
-import { type FieldErrors, focusField, parseApiError, withoutKey } from "@/lib/formErrors";
+import {
+  type FieldErrors, focusField, isEmail, isPhone, parseApiError, withoutKey,
+} from "@/lib/formErrors";
 import { cn } from "@/lib/format";
 import type { BookingResultData, Customer, RouteOption } from "@/lib/types";
 
@@ -611,6 +613,7 @@ function PartyPicker({
   const [draft, setDraft] = useState({ name: "", phone: "", email: "" });
   const [label, setLabel] = useState("");
   const [picked, setPicked] = useState<PickedAddress | null>(null);
+  const [errors, setErrors] = useState<FieldErrors>({});
 
   const selected = customers.find((c) => c.id === customerId);
 
@@ -619,6 +622,25 @@ function PartyPicker({
     setDraft({ name: "", phone: "", email: "" });
     setLabel("");
     setPicked(null);
+    setErrors({});
+  }
+
+  // Validate the inline new-customer form, then create. Highlights the exact
+  // field rather than leaving the operator to guess why Save did nothing.
+  function saveCustomer() {
+    const e: FieldErrors = {};
+    if (!draft.name.trim()) e.newName = "Company name is required.";
+    if (!draft.phone.trim()) e.newPhone = "Phone number is required.";
+    else if (!isPhone(draft.phone)) e.newPhone = "Enter a valid phone number (at least 10 digits).";
+    if (!isEmail(draft.email)) e.newEmail = "Enter a valid email address.";
+    if (!picked) e.newAddress = "Pick the location on the map.";
+    setErrors(e);
+    if (Object.keys(e).length > 0) {
+      const first = ["newName", "newPhone", "newEmail"].find((k) => e[k]);
+      if (first) focusField(first);
+      return;
+    }
+    createCustomer.mutate();
   }
 
   const createCustomer = useMutation({
@@ -669,20 +691,22 @@ function PartyPicker({
       {mode === "customer" ? (
         <div className="space-y-3">
           <Input label="Company name" name="newName" value={draft.name}
-            onChange={(e) => setDraft({ ...draft, name: e.target.value })} required />
+            onChange={(e) => { setDraft({ ...draft, name: e.target.value }); setErrors((x) => withoutKey(x, "newName")); }}
+            error={errors.newName} required />
           <Input label="Phone" name="newPhone" value={draft.phone} inputMode="tel"
-            onChange={(e) => setDraft({ ...draft, phone: e.target.value })} required />
+            onChange={(e) => { setDraft({ ...draft, phone: e.target.value }); setErrors((x) => withoutKey(x, "newPhone")); }}
+            error={errors.newPhone} required />
           <Input label="Email" name="newEmail" type="email" value={draft.email}
-            onChange={(e) => setDraft({ ...draft, email: e.target.value })}
+            onChange={(e) => { setDraft({ ...draft, email: e.target.value }); setErrors((x) => withoutKey(x, "newEmail")); }}
+            error={errors.newEmail}
             hint="Without one, the tracking link can only go by WhatsApp or SMS" />
           <Input label="Address label" name="newLabel" value={label}
             onChange={(e) => setLabel(e.target.value)} placeholder="Factory gate" />
-          <AddressPicker label="Location" value={picked} onChange={setPicked} />
+          <AddressPicker label="Location" value={picked} onChange={(a) => { setPicked(a); setErrors((x) => withoutKey(x, "newAddress")); }} />
+          {errors.newAddress && <p className="text-sm text-[var(--danger)]">{errors.newAddress}</p>}
           {error && <ErrorNote>{error.message}</ErrorNote>}
           <div className="flex gap-2">
-            <Button type="button" size="sm" loading={busy}
-              disabled={!draft.name || !draft.phone || !picked}
-              onClick={() => createCustomer.mutate()}>
+            <Button type="button" size="sm" loading={busy} onClick={saveCustomer}>
               Save customer
             </Button>
             <Button type="button" size="sm" variant="secondary" onClick={reset}>Cancel</Button>

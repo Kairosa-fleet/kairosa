@@ -12,6 +12,8 @@ import {
   Spinner,
   StatusBadge,
 } from "@/components/ui";
+import { ErrorSummary, type SummaryItem } from "@/components/ErrorSummary";
+import { type FieldErrors, focusField, parseApiError, withoutKey } from "@/lib/formErrors";
 import { relativeTime } from "@/lib/format";
 import {
   useAllDevices,
@@ -36,19 +38,40 @@ export default function DevicesPage() {
   const [label, setLabel] = useState("");
   const [driverId, setDriverId] = useState("");
   const [justRegistered, setJustRegistered] = useState<DeviceRegistered | null>(null);
+  const [errors, setErrors] = useState<FieldErrors>({});
+  const [general, setGeneral] = useState<string[]>([]);
 
   const devices = devicesQuery.data ?? [];
   const drivers = driversQuery.data ?? [];
-  const error =
-    devicesQuery.error ?? register.error ?? revoke.error ?? driversQuery.error;
+  // List-level failures only; registration errors are shown inside the form.
+  const error = devicesQuery.error ?? revoke.error ?? driversQuery.error;
+
+  const registerSummary: SummaryItem[] = [
+    ...(errors.label ? [{ field: "label", message: errors.label }] : []),
+    ...general.map((message) => ({ message })),
+  ];
 
   async function onRegister(e: React.FormEvent) {
     e.preventDefault();
-    const created = await register.mutateAsync({ label, driverId: driverId || null });
-    setJustRegistered(created);
-    setLabel("");
-    setDriverId("");
-    setShowForm(false);
+    setGeneral([]);
+    if (!label.trim()) {
+      setErrors({ label: "Give the device a name so you can recognise it." });
+      focusField("label");
+      return;
+    }
+    setErrors({});
+    try {
+      const created = await register.mutateAsync({ label: label.trim(), driverId: driverId || null });
+      setJustRegistered(created);
+      setLabel("");
+      setDriverId("");
+      setShowForm(false);
+    } catch (err) {
+      const parsed = parseApiError(err);
+      setErrors(parsed.fields);
+      setGeneral(parsed.general.length ? parsed.general : ["Could not register the device. Please try again."]);
+      if (parsed.fields.label) focusField("label");
+    }
   }
 
   function onRevoke(device: Device) {
@@ -110,13 +133,15 @@ export default function DevicesPage() {
 
       {showForm && (
         <Card className="mb-4">
-          <form onSubmit={onRegister} className="space-y-4">
+          <form onSubmit={onRegister} noValidate className="space-y-4">
+            <ErrorSummary items={registerSummary} />
             <Input
               label="Vehicle or device name"
               name="label"
               value={label}
-              onChange={(e) => setLabel(e.target.value)}
+              onChange={(e) => { setLabel(e.target.value); setErrors((x) => withoutKey(x, "label")); }}
               placeholder="Truck 01 — GJ 06 AB 1234"
+              error={errors.label}
               required
             />
             <div className="flex flex-col gap-1.5">

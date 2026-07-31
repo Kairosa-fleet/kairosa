@@ -10,7 +10,9 @@ import { ErrorSummary, type SummaryItem } from "@/components/ErrorSummary";
 import { Button, Card, EmptyState, ErrorNote, Input, Spinner } from "@/components/ui";
 import { api } from "@/lib/api";
 import { clearFormDraft, DRAFT_KEYS, useFormDraft } from "@/lib/formDraft";
-import { type FieldErrors, focusField, parseApiError, withoutKey } from "@/lib/formErrors";
+import {
+  type FieldErrors, focusField, isEmail, isGstin, isPhone, parseApiError, withoutKey,
+} from "@/lib/formErrors";
 import type { Customer, CustomerAddress } from "@/lib/types";
 
 export default function CustomersPage() {
@@ -337,6 +339,9 @@ function CustomerForm({
     if (!f.name.trim()) e.name = "Company name is required.";
     else if (f.name.trim().length < 2) e.name = "Company name is too short.";
     if (!f.phone.trim()) e.phone = "Phone number is required.";
+    else if (!isPhone(f.phone)) e.phone = "Enter a valid phone number (at least 10 digits).";
+    if (!isEmail(f.email)) e.email = "Enter a valid email address.";
+    if (!isGstin(f.gstin)) e.gstin = "That isn't a valid 15-character GSTIN (e.g. 24ABCDE1234F1Z5).";
     return e;
   }
 

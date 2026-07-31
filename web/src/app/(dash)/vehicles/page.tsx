@@ -467,7 +467,7 @@ function VehicleForm({
 
   // The order errors are focused/listed in — top to bottom, matching the form.
   const ERROR_ORDER = [
-    "registrationNumber",
+    "registrationNumber", "capacityKg", "manufactureYear",
     ...DOC_FIELDS.flatMap((f) => [`doc-${f.type}`, `exp-${f.type}`, `docfile-${f.type}`]),
   ];
 
@@ -475,6 +475,13 @@ function VehicleForm({
   function validate(): FieldErrors {
     const e: FieldErrors = {};
     if (!form.registrationNumber.trim()) e.registrationNumber = "Registration number is required.";
+    if (form.manufactureYear) {
+      const y = Number(form.manufactureYear);
+      if (!Number.isInteger(y) || y < 1980 || y > new Date().getFullYear() + 1)
+        e.manufactureYear = "Enter a valid 4-digit manufacture year.";
+    }
+    if (form.capacityKg && (Number.isNaN(Number(form.capacityKg)) || Number(form.capacityKg) <= 0))
+      e.capacityKg = "Enter the capacity in kg as a positive number.";
     for (const f of DOC_FIELDS) {
       if (!f.required) continue;
       const d = docs[f.type] ?? EMPTY_DOC;
@@ -610,11 +617,12 @@ function VehicleForm({
               type="number"
               value={form.capacityKg}
               onChange={(e) => set("capacityKg", e.target.value)}
+              error={errors.capacityKg}
               placeholder="16000"
             />
             <Input label="Make" name="make" value={form.make} onChange={(e) => set("make", e.target.value)} placeholder="Tata" />
             <Input label="Model" name="model" value={form.model} onChange={(e) => set("model", e.target.value)} placeholder="LPT 1618" />
-            <Input label="Year" name="manufactureYear" type="number" value={form.manufactureYear} onChange={(e) => set("manufactureYear", e.target.value)} placeholder="2021" />
+            <Input label="Year" name="manufactureYear" type="number" value={form.manufactureYear} onChange={(e) => set("manufactureYear", e.target.value)} error={errors.manufactureYear} placeholder="2021" />
             <Input label="Body type" name="bodyType" value={form.bodyType} onChange={(e) => set("bodyType", e.target.value)} placeholder="Closed body" />
             <Input label="Chassis number" name="chassisNumber" value={form.chassisNumber} onChange={(e) => set("chassisNumber", e.target.value)} />
             <Input label="Engine number" name="engineNumber" value={form.engineNumber} onChange={(e) => set("engineNumber", e.target.value)} />

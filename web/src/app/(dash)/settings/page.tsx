@@ -5,7 +5,12 @@ import { AlertTriangle, Check, FileText } from "lucide-react";
 import { useState } from "react";
 
 import { Button, Card, ErrorNote, Input, Spinner } from "@/components/ui";
+import { ErrorSummary, type SummaryItem } from "@/components/ErrorSummary";
 import { api } from "@/lib/api";
+import {
+  type FieldErrors, focusField, isEmail, isGstin, isPan, isPhone, isPincode,
+  parseApiError, withoutKey,
+} from "@/lib/formErrors";
 import type { OrgSettings } from "@/lib/types";
 
 /**
@@ -46,7 +51,12 @@ export default function SettingsPage() {
 function SettingsForm({ settings, onSaved }: { settings: OrgSettings; onSaved: () => void }) {
   const [f, setF] = useState(settings);
   const [saved, setSaved] = useState(false);
-  const set = (k: keyof OrgSettings, v: string) => setF((s) => ({ ...s, [k]: v }));
+  const [errors, setErrors] = useState<FieldErrors>({});
+  const [general, setGeneral] = useState<string[]>([]);
+  const set = (k: keyof OrgSettings, v: string) => {
+    setF((s) => ({ ...s, [k]: v }));
+    setErrors((e) => withoutKey(e, k as string));
+  };
 
   const save = useMutation({
     mutationFn: () =>
@@ -80,11 +90,57 @@ function SettingsForm({ settings, onSaved }: { settings: OrgSettings; onSaved: (
   if (!f.city) missing.push("City");
   if (!f.state) missing.push("State");
 
+  const ERROR_ORDER = ["name", "gstin", "pan", "pincode", "phone", "email"];
+
+  // Hard rules that BLOCK saving: the trade name must exist, and anything typed
+  // into a formatted field must be well-formed. (The soft "letterhead
+  // incomplete" banner above is a separate nudge, not a block.)
+  function validate(): FieldErrors {
+    const e: FieldErrors = {};
+    if (!f.name.trim()) e.name = "Trade name is required — it's shown across the app.";
+    if (!isGstin(f.gstin ?? "")) e.gstin = "That isn't a valid 15-character GSTIN (e.g. 24ABCDE1234F1Z5).";
+    if (!isPan(f.pan ?? "")) e.pan = "That isn't a valid PAN (e.g. ABCDE1234F).";
+    if (!isPincode(f.pincode ?? "")) e.pincode = "PIN code must be 6 digits.";
+    if (!isPhone(f.phone ?? "")) e.phone = "Enter a valid phone number (at least 10 digits).";
+    if (!isEmail(f.email ?? "")) e.email = "Enter a valid email address.";
+    return e;
+  }
+
+  function applyServerError(err: unknown) {
+    const parsed = parseApiError(err);
+    setErrors((prev) => ({ ...prev, ...parsed.fields }));
+    setGeneral(Array.from(new Set(parsed.general)));
+    const first = ERROR_ORDER.find((k) => parsed.fields[k]);
+    if (first) focusField(first);
+  }
+
+  const summaryItems: SummaryItem[] = [
+    ...ERROR_ORDER.filter((k) => errors[k]).map((k) => ({ field: k, message: errors[k] })),
+    ...Object.keys(errors)
+      .filter((k) => !ERROR_ORDER.includes(k))
+      .map((k) => ({ field: k, message: errors[k] })),
+    ...general.map((message) => ({ message })),
+  ];
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setGeneral([]);
+    const found = validate();
+    setErrors(found);
+    if (Object.keys(found).length > 0) {
+      const first = ERROR_ORDER.find((k) => found[k]) ?? Object.keys(found)[0];
+      if (first) focusField(first);
+      return;
+    }
+    try {
+      await save.mutateAsync();
+    } catch (err) {
+      applyServerError(err);
+    }
+  }
+
   return (
-    <form
-      onSubmit={(e) => { e.preventDefault(); save.mutate(); }}
-      className="space-y-4"
-    >
+    <form onSubmit={submit} noValidate className="space-y-4">
       {missing.length > 0 ? (
         <div className="flex items-start gap-2 rounded-[var(--radius-control)] border border-[var(--warning)] bg-[var(--warning-soft)] p-3 text-sm text-[var(--warning)]">
           <AlertTriangle size={15} className="mt-0.5 shrink-0" aria-hidden />
@@ -100,15 +156,15 @@ function SettingsForm({ settings, onSaved }: { settings: OrgSettings; onSaved: (
         </div>
       )}
 
-      {save.error && <ErrorNote>{(save.error as Error).message}</ErrorNote>}
+      <ErrorSummary items={summaryItems} />
 
       <Card className="space-y-4">
         <h3 className="text-base font-semibold">Identity</h3>
         <div className="grid gap-4 sm:grid-cols-2">
-          <Input label="Trade name" name="name" value={f.name} onChange={(e) => set("name", e.target.value)} required placeholder="Vediya Transport" hint="Short name shown across the app" />
+          <Input label="Trade name" name="name" value={f.name} onChange={(e) => set("name", e.target.value)} error={errors.name} required placeholder="Vediya Transport" hint="Short name shown across the app" />
           <Input label="Registered legal name" name="legalName" value={f.legalName ?? ""} onChange={(e) => set("legalName", e.target.value)} placeholder="Vediya Transport Company" />
-          <Input label="GSTIN" name="gstin" value={f.gstin ?? ""} onChange={(e) => set("gstin", e.target.value.toUpperCase())} placeholder="24ABCDE1234F1Z5" />
-          <Input label="PAN" name="pan" value={f.pan ?? ""} onChange={(e) => set("pan", e.target.value.toUpperCase())} placeholder="ABCDE1234F" />
+          <Input label="GSTIN" name="gstin" value={f.gstin ?? ""} onChange={(e) => set("gstin", e.target.value.toUpperCase())} error={errors.gstin} placeholder="24ABCDE1234F1Z5" />
+          <Input label="PAN" name="pan" value={f.pan ?? ""} onChange={(e) => set("pan", e.target.value.toUpperCase())} error={errors.pan} placeholder="ABCDE1234F" />
           <Input label="Transporter ID (e-way bill)" name="transporterId" value={f.transporterId ?? ""} onChange={(e) => set("transporterId", e.target.value.toUpperCase())} placeholder="88AABBCC1234D5" hint="Printed so consignors can enter it on the portal" />
         </div>
       </Card>
@@ -121,10 +177,10 @@ function SettingsForm({ settings, onSaved }: { settings: OrgSettings; onSaved: (
           </div>
           <Input label="City" name="city" value={f.city ?? ""} onChange={(e) => set("city", e.target.value)} placeholder="Vadodara" />
           <Input label="State" name="state" value={f.state ?? ""} onChange={(e) => set("state", e.target.value)} placeholder="Gujarat" />
-          <Input label="PIN code" name="pincode" value={f.pincode ?? ""} onChange={(e) => set("pincode", e.target.value)} placeholder="390019" />
-          <Input label="Phone" name="phone" value={f.phone ?? ""} onChange={(e) => set("phone", e.target.value)} placeholder="+91 98250 12345" inputMode="tel" />
+          <Input label="PIN code" name="pincode" value={f.pincode ?? ""} onChange={(e) => set("pincode", e.target.value)} error={errors.pincode} inputMode="numeric" placeholder="390019" />
+          <Input label="Phone" name="phone" value={f.phone ?? ""} onChange={(e) => set("phone", e.target.value)} error={errors.phone} placeholder="+91 98250 12345" inputMode="tel" />
           <div className="sm:col-span-2">
-            <Input label="Email" name="email" type="email" value={f.email ?? ""} onChange={(e) => set("email", e.target.value)} placeholder="office@company.com" />
+            <Input label="Email" name="email" type="email" value={f.email ?? ""} onChange={(e) => set("email", e.target.value)} error={errors.email} placeholder="office@company.com" />
           </div>
         </div>
       </Card>

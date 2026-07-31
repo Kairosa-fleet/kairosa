@@ -4,9 +4,11 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { Logo } from "@/components/Logo";
-import { Button, Card, ErrorNote, Input } from "@/components/ui";
+import { ErrorSummary, type SummaryItem } from "@/components/ErrorSummary";
+import { Button, Card, Input } from "@/components/ui";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { api, isAuthenticated } from "@/lib/api";
+import { type FieldErrors, focusField, isEmail, parseApiError, withoutKey } from "@/lib/formErrors";
 import { useHydrated } from "@/lib/useHydrated";
 
 export default function LoginPage() {
@@ -14,7 +16,9 @@ export default function LoginPage() {
   const hydrated = useHydrated();
   const [mode, setMode] = useState<"login" | "signup">("login");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [errors, setErrors] = useState<FieldErrors>({});
+  const [general, setGeneral] = useState<string[]>([]);
+  const clearErr = (k: string) => setErrors((e) => withoutKey(e, k));
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -25,10 +29,39 @@ export default function LoginPage() {
     if (hydrated && isAuthenticated()) router.replace("/fleet");
   }, [hydrated, router]);
 
+  const ERROR_ORDER =
+    mode === "signup" ? ["organisation", "fullName", "email", "password"] : ["email", "password"];
+
+  function validate(): FieldErrors {
+    const e: FieldErrors = {};
+    if (mode === "signup") {
+      if (orgName.trim().length < 2) e.organisation = "Enter your organisation's name.";
+      if (fullName.trim().length < 2) e.fullName = "Enter your name.";
+    }
+    if (!email.trim()) e.email = "Email is required.";
+    else if (!isEmail(email)) e.email = "Enter a valid email address.";
+    if (!password) e.password = "Password is required.";
+    else if (mode === "signup" && password.length < 12)
+      e.password = "Use at least 12 characters, with letters and numbers.";
+    return e;
+  }
+
+  const summaryItems: SummaryItem[] = [
+    ...ERROR_ORDER.filter((k) => errors[k]).map((k) => ({ field: k, message: errors[k] })),
+    ...general.map((message) => ({ message })),
+  ];
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
+    setGeneral([]);
+    const found = validate();
+    setErrors(found);
+    if (Object.keys(found).length > 0) {
+      const first = ERROR_ORDER.find((k) => found[k]) ?? Object.keys(found)[0];
+      if (first) focusField(first);
+      return;
+    }
     setBusy(true);
-    setError(null);
     try {
       if (mode === "login") {
         await api.login(email, password);
@@ -42,7 +75,11 @@ export default function LoginPage() {
       }
       router.replace("/fleet");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong");
+      // A failed sign-in is an email/password problem but we can't say which —
+      // show the server's reason in the summary rather than blame a field.
+      const parsed = parseApiError(err);
+      setErrors((prev) => ({ ...prev, ...parsed.fields }));
+      setGeneral(parsed.general.length ? Array.from(new Set(parsed.general)) : ["Something went wrong. Please try again."]);
     } finally {
       setBusy(false);
     }
@@ -72,15 +109,17 @@ export default function LoginPage() {
               : "Set up your organisation and the first administrator account."}
           </p>
 
-          <form onSubmit={submit} className="space-y-4">
+          <form onSubmit={submit} noValidate className="space-y-4">
+            <ErrorSummary items={summaryItems} />
             {mode === "signup" && (
               <>
                 <Input
                   label="Organisation name"
                   name="organisation"
                   value={orgName}
-                  onChange={(e) => setOrgName(e.target.value)}
+                  onChange={(e) => { setOrgName(e.target.value); clearErr("organisation"); }}
                   placeholder="Patel Logistics"
+                  error={errors.organisation}
                   required
                   minLength={2}
                   autoComplete="organization"
@@ -89,8 +128,9 @@ export default function LoginPage() {
                   label="Your name"
                   name="fullName"
                   value={fullName}
-                  onChange={(e) => setFullName(e.target.value)}
+                  onChange={(e) => { setFullName(e.target.value); clearErr("fullName"); }}
                   placeholder="Pritam Vediya"
+                  error={errors.fullName}
                   required
                   minLength={2}
                   autoComplete="name"
@@ -103,8 +143,9 @@ export default function LoginPage() {
               name="email"
               type="email"
               value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              onChange={(e) => { setEmail(e.target.value); clearErr("email"); }}
               placeholder="you@company.com"
+              error={errors.email}
               required
               autoComplete="email"
             />
@@ -114,8 +155,9 @@ export default function LoginPage() {
               name="password"
               type="password"
               value={password}
-              onChange={(e) => setPassword(e.target.value)}
+              onChange={(e) => { setPassword(e.target.value); clearErr("password"); }}
               placeholder="••••••••••••"
+              error={errors.password}
               required
               minLength={mode === "signup" ? 12 : 1}
               autoComplete={mode === "login" ? "current-password" : "new-password"}
@@ -125,8 +167,6 @@ export default function LoginPage() {
                   : undefined
               }
             />
-
-            {error && <ErrorNote>{error}</ErrorNote>}
 
             <Button type="submit" loading={busy} className="w-full">
               {mode === "login" ? "Sign in" : "Create fleet"}
@@ -139,7 +179,8 @@ export default function LoginPage() {
               type="button"
               onClick={() => {
                 setMode(mode === "login" ? "signup" : "login");
-                setError(null);
+                setErrors({});
+                setGeneral([]);
               }}
               className="font-medium text-[var(--accent)] hover:underline"
             >
