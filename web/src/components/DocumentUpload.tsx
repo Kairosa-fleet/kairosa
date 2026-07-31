@@ -76,12 +76,15 @@ export function DocumentUpload({
   onPick,
   onClear,
   label = "Attach scanned PDF",
+  invalid = false,
 }: {
   id: string;
   doc: DocDraft;
   onPick: (file: File | undefined) => void;
   onClear: () => void;
   label?: string;
+  /** Draw a red border + message when this scan is required but missing. */
+  invalid?: boolean;
 }) {
   return (
     <div className="space-y-1.5">
@@ -109,8 +112,11 @@ export function DocumentUpload({
       ) : (
         <label
           htmlFor={`file-${id}`}
+          id={`docfile-${id}`}
+          tabIndex={-1}
           className={cn(
-            "flex cursor-pointer items-center gap-2 rounded-[var(--radius-control)] border border-dashed border-[var(--stroke)] px-3 py-2.5 text-sm transition-colors",
+            "flex cursor-pointer items-center gap-2 rounded-[var(--radius-control)] border border-dashed px-3 py-2.5 text-sm transition-colors outline-none",
+            invalid ? "border-[var(--danger)]" : "border-[var(--stroke)]",
             doc.uploading
               ? "opacity-60"
               : "hover:border-[var(--accent)] hover:bg-[var(--surface)]",
@@ -134,7 +140,11 @@ export function DocumentUpload({
           />
         </label>
       )}
-      {doc.error && <p className="text-xs text-[var(--danger)]">{doc.error}</p>}
+      {doc.error ? (
+        <p className="text-xs text-[var(--danger)]">{doc.error}</p>
+      ) : invalid ? (
+        <p className="text-xs text-[var(--danger)]">Attach the scanned PDF.</p>
+      ) : null}
     </div>
   );
 }

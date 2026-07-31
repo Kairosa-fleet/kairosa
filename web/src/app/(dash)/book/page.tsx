@@ -8,9 +8,11 @@ import { useEffect, useState } from "react";
 import { AddressPicker, type PickedAddress } from "@/components/AddressPicker";
 import { Button, Card, ErrorNote, Input, Spinner, StatusBadge } from "@/components/ui";
 import { DraftBanner, DraftSavedHint } from "@/components/DraftBanner";
+import { ErrorSummary, type SummaryItem } from "@/components/ErrorSummary";
 import { DocumentUpload, EMPTY_DOC, type DocDraft } from "@/components/DocumentUpload";
 import { api } from "@/lib/api";
 import { clearFormDraft, DRAFT_KEYS, useFormDraft } from "@/lib/formDraft";
+import { type FieldErrors, focusField, parseApiError, withoutKey } from "@/lib/formErrors";
 import { cn } from "@/lib/format";
 import type { BookingResultData, Customer, RouteOption } from "@/lib/types";
 
@@ -175,14 +177,75 @@ export default function BookPage() {
     onSuccess: () => clearFormDraft(DRAFT_KEYS.booking),
   });
 
-  const ready =
-    consignorId && consignorAddressId && consigneeId && consigneeAddressId &&
-    goods.goodsDescription && scheduledStart &&
-    (!useOwnLr || (ownLr && lrCheck?.available));
+  // Field-level errors keyed by the anchor id the summary scrolls to.
+  const [errors, setErrors] = useState<FieldErrors>({});
+  const [general, setGeneral] = useState<string[]>([]);
+  const clearErr = (k: string) => setErrors((e) => withoutKey(e, k));
 
-  function submit(e: React.FormEvent) {
+  const ERROR_ORDER = ["ownLr", "consignor", "consignee", "goods", "start"];
+
+  function validate(): FieldErrors {
+    const e: FieldErrors = {};
+    if (!consignorId) e.consignor = "Choose the consignor (sender).";
+    else if (!consignorAddressId) e.consignor = "Choose the consignor's pickup address.";
+    if (!consigneeId) e.consignee = "Choose the consignee (receiver).";
+    else if (!consigneeAddressId) e.consignee = "Choose the consignee's delivery address.";
+    if (consignorAddressId && consignorAddressId === consigneeAddressId)
+      e.consignee = "Pickup and delivery can't be the same address.";
+    if (!goods.goodsDescription.trim()) e.goods = "Describe the goods being sent.";
+    if (!scheduledStart) e.start = "Set the scheduled start date and time.";
+    if (useOwnLr) {
+      if (!ownLr.trim()) e.ownLr = "Enter your LR number, or switch back to auto.";
+      else if (lrCheck && !lrCheck.available)
+        e.ownLr = "That LR number is already used — choose another.";
+    }
+    return e;
+  }
+
+  // Map a server rejection (nested consignment/trip fields, or a business error
+  // like a double-booking) onto the right anchor, else show it verbatim.
+  function applyServerError(err: unknown) {
+    const parsed = parseApiError(err);
+    const mapped: FieldErrors = {};
+    const gen: string[] = [];
+    for (const [k, msg] of Object.entries(parsed.fields)) {
+      if (k.endsWith("goodsDescription")) mapped.goods = msg;
+      else if (k.endsWith("scheduledStart")) mapped.start = msg;
+      else if (/lrnumber/i.test(k)) mapped.ownLr = msg;
+      else if (k.endsWith("consignorAddressId") || k.endsWith("consignorId")) mapped.consignor = msg;
+      else if (k.endsWith("consigneeAddressId") || k.endsWith("consigneeId")) mapped.consignee = msg;
+      else gen.push(msg);
+    }
+    for (const msg of parsed.general) {
+      if (useOwnLr && /\blr\b/i.test(msg) && !mapped.ownLr) mapped.ownLr = msg;
+      else gen.push(msg);
+    }
+    setErrors((prev) => ({ ...prev, ...mapped }));
+    setGeneral(Array.from(new Set(gen)));
+    const first = ERROR_ORDER.find((kk) => mapped[kk]);
+    if (first) focusField(first);
+  }
+
+  const summaryItems: SummaryItem[] = [
+    ...ERROR_ORDER.filter((k) => errors[k]).map((k) => ({ field: k, message: errors[k] })),
+    ...Object.keys(errors)
+      .filter((k) => !ERROR_ORDER.includes(k))
+      .map((k) => ({ field: k, message: errors[k] })),
+    ...general.map((message) => ({ message })),
+  ];
+
+  async function submit(e: React.FormEvent) {
     e.preventDefault();
-    book.mutate({
+    setGeneral([]);
+    const found = validate();
+    setErrors(found);
+    if (Object.keys(found).length > 0) {
+      const first = ERROR_ORDER.find((k) => found[k]) ?? Object.keys(found)[0];
+      if (first) focusField(first);
+      return;
+    }
+    try {
+      await book.mutateAsync({
       consignment: {
         lrNumber: useOwnLr ? ownLr.trim() : null,
         consignorId, consignorAddressId, consigneeId, consigneeAddressId,
@@ -216,7 +279,10 @@ export default function BookPage() {
         notes: notes || null,
       },
       notifyOnCreate,
-    });
+      });
+    } catch (err) {
+      applyServerError(err);
+    }
   }
 
   if (customers.isPending || vehicles.isPending) return <Spinner label="Loading…" />;
@@ -246,9 +312,8 @@ export default function BookPage() {
         link for each party.
       </p>
 
-      {book.error && <div className="mb-4"><ErrorNote>{(book.error as Error).message}</ErrorNote></div>}
-
-      <form onSubmit={submit} className="space-y-4">
+      <form onSubmit={submit} noValidate className="space-y-4">
+        <ErrorSummary items={summaryItems} />
         {draft.found && (
           <DraftBanner
             savedAt={draft.found.savedAt}
@@ -287,15 +352,15 @@ export default function BookPage() {
               label="Your LR number"
               name="ownLr"
               value={ownLr}
-              onChange={(e) => setOwnLr(e.target.value.toUpperCase())}
+              onChange={(e) => { setOwnLr(e.target.value.toUpperCase()); clearErr("ownLr"); }}
               placeholder="From your pre-printed LR book"
-              error={lrCheck && !lrCheck.available ? "Already used — pick another" : undefined}
+              error={errors.ownLr ?? (lrCheck && !lrCheck.available ? "Already used — pick another" : undefined)}
               hint={lrCheck?.available ? "Available" : undefined}
             />
           )}
           <button
             type="button"
-            onClick={() => setUseOwnLr((v) => !v)}
+            onClick={() => { setUseOwnLr((v) => !v); clearErr("ownLr"); }}
             className="text-xs font-medium text-[var(--accent)] hover:underline"
           >
             {useOwnLr ? "Use an auto-generated number" : "I use my own pre-printed LR book"}
@@ -313,20 +378,24 @@ export default function BookPage() {
           )}
           <div className="grid gap-4 sm:grid-cols-2">
             <PartyPicker
+              id="consignor"
               title="Consignor (sender)"
               customers={customerList}
               customerId={consignorId}
               addressId={consignorAddressId}
-              onCustomer={(id) => { setConsignorId(id); setConsignorAddressId(""); }}
-              onAddress={setConsignorAddressId}
+              invalid={Boolean(errors.consignor)}
+              onCustomer={(id) => { setConsignorId(id); setConsignorAddressId(""); clearErr("consignor"); }}
+              onAddress={(id) => { setConsignorAddressId(id); clearErr("consignor"); clearErr("consignee"); }}
             />
             <PartyPicker
+              id="consignee"
               title="Consignee (receiver)"
               customers={customerList}
               customerId={consigneeId}
               addressId={consigneeAddressId}
-              onCustomer={(id) => { setConsigneeId(id); setConsigneeAddressId(""); }}
-              onAddress={setConsigneeAddressId}
+              invalid={Boolean(errors.consignee)}
+              onCustomer={(id) => { setConsigneeId(id); setConsigneeAddressId(""); clearErr("consignee"); }}
+              onAddress={(id) => { setConsigneeAddressId(id); clearErr("consignee"); }}
             />
           </div>
         </Card>
@@ -336,7 +405,7 @@ export default function BookPage() {
           <h3 className="text-base font-semibold">Goods</h3>
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="sm:col-span-2">
-              <Input label="Description" name="goods" value={goods.goodsDescription} onChange={(e) => setGoods({ ...goods, goodsDescription: e.target.value })} required placeholder="Polished marble slabs" />
+              <Input label="Description" name="goods" value={goods.goodsDescription} onChange={(e) => { setGoods({ ...goods, goodsDescription: e.target.value }); clearErr("goods"); }} error={errors.goods} required placeholder="Polished marble slabs" />
             </div>
             <Input label="HSN code" name="hsn" value={goods.hsnCode} onChange={(e) => setGoods({ ...goods, hsnCode: e.target.value })} placeholder="6802" />
             <Input label="Packages" name="pkg" type="number" value={goods.packageCount} onChange={(e) => setGoods({ ...goods, packageCount: e.target.value })} placeholder="120" />
@@ -396,7 +465,7 @@ export default function BookPage() {
             <Select label="Vehicle" value={vehicleId} onChange={setVehicleId} options={(vehicles.data ?? []).map((v) => ({ value: v.id, label: `${v.registrationNumber} — ${v.displayName ?? v.vehicleType}` }))} />
             <Select label="Driver" value={driverId} onChange={setDriverId} options={(drivers.data ?? []).map((d) => ({ value: d.id, label: `${d.fullName}${d.licenceClass ? ` (${d.licenceClass})` : ""}` }))} />
             <Select label="Tracking phone" value={deviceId} onChange={setDeviceId} options={(devices.data ?? []).filter((d) => d.status === "active").map((d) => ({ value: d.id, label: d.label }))} hint="The enrolled phone that reports position" />
-            <Input label="Scheduled start" name="start" type="datetime-local" value={scheduledStart} onChange={(e) => setScheduledStart(e.target.value)} required />
+            <Input label="Scheduled start" name="start" type="datetime-local" value={scheduledStart} onChange={(e) => { setScheduledStart(e.target.value); clearErr("start"); }} error={errors.start} required />
             <div className="sm:col-span-2">
               <Input label="Notes for the driver" name="notes" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Call receiver 1 hour before arrival" />
             </div>
@@ -481,8 +550,10 @@ export default function BookPage() {
           </label>
         </Card>
 
+        {summaryItems.length > 0 && <ErrorSummary items={summaryItems} />}
+
         <div className="flex flex-wrap items-center gap-2 pb-8">
-          <Button type="submit" loading={book.isPending} disabled={!ready}>
+          <Button type="submit" loading={book.isPending}>
             <Truck size={16} aria-hidden />
             Book consignment
           </Button>
@@ -526,11 +597,13 @@ function Select({
  * mid-form would throw away everything already typed.
  */
 function PartyPicker({
-  title, customers, customerId, addressId, onCustomer, onAddress,
+  id, title, customers, customerId, addressId, invalid = false, onCustomer, onAddress,
 }: {
+  id?: string;
   title: string;
   customers: Customer[];
   customerId: string; addressId: string;
+  invalid?: boolean;
   onCustomer: (id: string) => void; onAddress: (id: string) => void;
 }) {
   const queryClient = useQueryClient();
@@ -583,7 +656,14 @@ function PartyPicker({
   const error = (createCustomer.error ?? createAddress.error) as Error | null;
 
   return (
-    <div className="space-y-3 rounded-[var(--radius-control)] border border-[var(--stroke)] p-3">
+    <div
+      id={id}
+      tabIndex={-1}
+      className={cn(
+        "space-y-3 rounded-[var(--radius-control)] border p-3 outline-none",
+        invalid ? "border-[var(--danger)]" : "border-[var(--stroke)]",
+      )}
+    >
       <div className="text-sm font-semibold">{title}</div>
 
       {mode === "customer" ? (

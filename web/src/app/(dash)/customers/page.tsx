@@ -6,9 +6,11 @@ import { useState } from "react";
 
 import { AddressPicker, type PickedAddress } from "@/components/AddressPicker";
 import { DraftBanner, DraftSavedHint } from "@/components/DraftBanner";
+import { ErrorSummary, type SummaryItem } from "@/components/ErrorSummary";
 import { Button, Card, EmptyState, ErrorNote, Input, Spinner } from "@/components/ui";
 import { api } from "@/lib/api";
 import { clearFormDraft, DRAFT_KEYS, useFormDraft } from "@/lib/formDraft";
+import { type FieldErrors, focusField, parseApiError, withoutKey } from "@/lib/formErrors";
 import type { Customer, CustomerAddress } from "@/lib/types";
 
 export default function CustomersPage() {
@@ -53,11 +55,10 @@ export default function CustomersPage() {
         </Button>
       </div>
 
-      {(customers.error || create.error || update.error) && (
+      {/* List-load failures only; submit errors show inside the form on the field. */}
+      {customers.error && (
         <div className="mb-4">
-          <ErrorNote>
-            {((customers.error ?? create.error ?? update.error) as Error).message}
-          </ErrorNote>
+          <ErrorNote>{(customers.error as Error).message}</ErrorNote>
         </div>
       )}
 
@@ -68,7 +69,7 @@ export default function CustomersPage() {
           busy={create.isPending || update.isPending}
           onCancel={() => { setShowForm(false); setEditing(null); }}
           onSubmit={(body) =>
-            editing ? update.mutate({ id: editing.id, body }) : create.mutate(body)
+            editing ? update.mutateAsync({ id: editing.id, body }) : create.mutateAsync(body)
           }
         />
       )}
@@ -307,7 +308,8 @@ function CustomerForm({
   busy: boolean;
   /** When present the form edits this customer instead of creating one. */
   existing?: Customer;
-  onSubmit: (b: unknown) => void;
+  /** Rejects on a server error so the form can map it to the offending field. */
+  onSubmit: (b: unknown) => Promise<unknown>;
   onCancel: () => void;
 }) {
   const [f, setF] = useState({
@@ -320,7 +322,39 @@ function CustomerForm({
   });
   const [addressLabel, setAddressLabel] = useState("");
   const [address, setAddress] = useState<PickedAddress | null>(null);
-  const set = (k: string, v: string) => setF((s) => ({ ...s, [k]: v }));
+
+  const [errors, setErrors] = useState<FieldErrors>({});
+  const [general, setGeneral] = useState<string[]>([]);
+  const set = (k: string, v: string) => {
+    setF((s) => ({ ...s, [k]: v }));
+    setErrors((e) => withoutKey(e, k));
+  };
+
+  const ERROR_ORDER = ["name", "phone", "email", "gstin"];
+
+  function validate(): FieldErrors {
+    const e: FieldErrors = {};
+    if (!f.name.trim()) e.name = "Company name is required.";
+    else if (f.name.trim().length < 2) e.name = "Company name is too short.";
+    if (!f.phone.trim()) e.phone = "Phone number is required.";
+    return e;
+  }
+
+  function applyServerError(err: unknown) {
+    const parsed = parseApiError(err);
+    setErrors((prev) => ({ ...prev, ...parsed.fields }));
+    setGeneral(Array.from(new Set(parsed.general)));
+    const first = ERROR_ORDER.find((k) => parsed.fields[k]);
+    if (first) focusField(first);
+  }
+
+  const summaryItems: SummaryItem[] = [
+    ...ERROR_ORDER.filter((k) => errors[k]).map((k) => ({ field: k, message: errors[k] })),
+    ...Object.keys(errors)
+      .filter((k) => !ERROR_ORDER.includes(k))
+      .map((k) => ({ field: k, message: errors[k] })),
+    ...general.map((message) => ({ message })),
+  ];
 
   /* --- Draft persistence — new customers only (an edit is seeded from the
      server). Keeps the typed details and the picked location on the device so
@@ -350,8 +384,16 @@ function CustomerForm({
     draft.clear();
   }
 
-  function submit(e: React.FormEvent) {
+  async function submit(e: React.FormEvent) {
     e.preventDefault();
+    setGeneral([]);
+    const found = validate();
+    setErrors(found);
+    if (Object.keys(found).length > 0) {
+      const first = ERROR_ORDER.find((k) => found[k]) ?? Object.keys(found)[0];
+      if (first) focusField(first);
+      return;
+    }
     const details = {
       name: f.name,
       contactPerson: f.contactPerson || null,
@@ -363,22 +405,27 @@ function CustomerForm({
     // Editing never touches addresses. They are managed on the card, because
     // a consignment holds an address by id and dropping one from under a
     // booked trip would strand it.
-    onSubmit(
-      existing
-        ? details
-        : {
-            ...details,
-            role: "both",
-            addresses: address
-              ? [{ ...address, label: addressLabel || null, contactPerson: f.contactPerson || null, contactPhone: f.phone }]
-              : [],
-          },
-    );
+    try {
+      await onSubmit(
+        existing
+          ? details
+          : {
+              ...details,
+              role: "both",
+              addresses: address
+                ? [{ ...address, label: addressLabel || null, contactPerson: f.contactPerson || null, contactPhone: f.phone }]
+                : [],
+            },
+      );
+    } catch (err) {
+      applyServerError(err);
+    }
   }
 
   return (
     <Card className="mb-4">
-      <form onSubmit={submit} className="space-y-5">
+      <form onSubmit={submit} noValidate className="space-y-5">
+        <ErrorSummary items={summaryItems} />
         {draft.found && (
           <DraftBanner
             savedAt={draft.found.savedAt}
@@ -392,12 +439,12 @@ function CustomerForm({
             {existing ? `Edit ${existing.name}` : "Customer"}
           </h3>
           <div className="grid gap-4 sm:grid-cols-2">
-            <Input label="Company name" name="name" value={f.name} onChange={(e) => set("name", e.target.value)} required minLength={2} placeholder="Rajasthan Marble Works" />
+            <Input label="Company name" name="name" value={f.name} onChange={(e) => set("name", e.target.value)} error={errors.name} required minLength={2} placeholder="Rajasthan Marble Works" />
             <Input label="Contact person" name="contactPerson" value={f.contactPerson} onChange={(e) => set("contactPerson", e.target.value)} placeholder="Mahesh Sharma" />
-            <Input label="Phone" name="phone" value={f.phone} onChange={(e) => set("phone", e.target.value)} required placeholder="+91 98100 00001" inputMode="tel" />
+            <Input label="Phone" name="phone" value={f.phone} onChange={(e) => set("phone", e.target.value)} error={errors.phone} required placeholder="+91 98100 00001" inputMode="tel" />
             <Input label="Alternate phone" name="altPhone" value={f.altPhone} onChange={(e) => set("altPhone", e.target.value)} inputMode="tel" />
-            <Input label="Email" name="email" type="email" value={f.email} onChange={(e) => set("email", e.target.value)} placeholder="accounts@company.com" />
-            <Input label="GSTIN" name="gstin" value={f.gstin} onChange={(e) => set("gstin", e.target.value.toUpperCase())} placeholder="08AAACR1234A1ZK" hint="Required on the consignment note if registered" />
+            <Input label="Email" name="email" type="email" value={f.email} onChange={(e) => set("email", e.target.value)} error={errors.email} placeholder="accounts@company.com" />
+            <Input label="GSTIN" name="gstin" value={f.gstin} onChange={(e) => set("gstin", e.target.value.toUpperCase())} error={errors.gstin} placeholder="08AAACR1234A1ZK" hint="Required on the consignment note if registered" />
           </div>
         </div>
 

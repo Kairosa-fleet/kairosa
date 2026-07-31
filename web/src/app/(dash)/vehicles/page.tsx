@@ -9,11 +9,13 @@ import { useState } from "react";
 import { Button, Card, EmptyState, ErrorNote, Input, Spinner, StatusBadge } from "@/components/ui";
 import { AuthedImage, openAuthedFile } from "@/components/AuthedFile";
 import { DraftBanner, DraftSavedHint } from "@/components/DraftBanner";
+import { ErrorSummary, type SummaryItem } from "@/components/ErrorSummary";
 import {
   DocumentUpload, EMPTY_DOC, shrinkImage, type DocDraft,
 } from "@/components/DocumentUpload";
 import { api } from "@/lib/api";
 import { clearFormDraft, DRAFT_KEYS, useFormDraft } from "@/lib/formDraft";
+import { type FieldErrors, focusField, parseApiError, withoutKey } from "@/lib/formErrors";
 import { cn } from "@/lib/format";
 import type { Vehicle, VehicleDoc, VehicleDocType, VehicleImage } from "@/lib/types";
 
@@ -102,11 +104,11 @@ export default function VehiclesPage() {
         </Button>
       </div>
 
-      {(vehicles.error || create.error || update.error) && (
+      {/* List-load failures only. Submit errors are shown inside the form,
+          mapped to the exact field that was rejected. */}
+      {vehicles.error && (
         <div className="mb-4">
-          <ErrorNote>
-            {((vehicles.error ?? create.error ?? update.error) as Error).message}
-          </ErrorNote>
+          <ErrorNote>{(vehicles.error as Error).message}</ErrorNote>
         </div>
       )}
 
@@ -118,8 +120,8 @@ export default function VehiclesPage() {
           onCancel={() => { setShowForm(false); setEditing(null); }}
           onSubmit={(body) =>
             editing
-              ? update.mutate({ id: editing.id, body })
-              : create.mutate(body)
+              ? update.mutateAsync({ id: editing.id, body })
+              : create.mutateAsync(body)
           }
         />
       )}
@@ -295,7 +297,8 @@ function VehicleForm({
   busy: boolean;
   /** When present the form edits this vehicle instead of creating one. */
   existing?: Vehicle;
-  onSubmit: (body: unknown) => void;
+  /** Rejects on a server error so the form can map it to the offending field. */
+  onSubmit: (body: unknown) => Promise<unknown>;
   onCancel: () => void;
 }) {
   const [form, setForm] = useState({
@@ -333,9 +336,23 @@ function VehicleForm({
   const [imageBusy, setImageBusy] = useState(false);
   const [imageError, setImageError] = useState<string | null>(null);
 
-  const set = (k: string, v: string) => setForm((f) => ({ ...f, [k]: v }));
-  const patchDoc = (type: string, patch: Partial<DocDraft>) =>
+  // Field-level validation errors, keyed by the input's element id so the error
+  // summary can scroll straight to the offending field.
+  const [errors, setErrors] = useState<FieldErrors>({});
+  const [general, setGeneral] = useState<string[]>([]);
+
+  const set = (k: string, v: string) => {
+    setForm((f) => ({ ...f, [k]: v }));
+    setErrors((e) => withoutKey(e, k)); // clear this field's red as it's corrected
+  };
+  const patchDoc = (type: string, patch: Partial<DocDraft>) => {
     setDocs((d) => ({ ...d, [type]: { ...(d[type] ?? EMPTY_DOC), ...patch } }));
+    setErrors((e) => {
+      let next = e;
+      for (const k of [`doc-${type}`, `exp-${type}`, `docfile-${type}`]) next = withoutKey(next, k);
+      return next;
+    });
+  };
 
   /* --- Draft persistence -------------------------------------------------
      Autosaves this in-progress entry to the browser so closing the tab,
@@ -446,47 +463,103 @@ function VehicleForm({
     }
   }
 
-  /** Which mandatory rows are not yet complete. Drives the disabled save. */
-  const incomplete = DOC_FIELDS.filter((f) => {
-    if (!f.required) return false;
-    const d = docs[f.type] ?? EMPTY_DOC;
-    return !d.number.trim() || !d.fileUrl || (f.needsExpiry && !d.expiresOn);
-  });
-
   const anyUploading = Object.values(docs).some((d) => d.uploading);
 
-  function submit(e: React.FormEvent) {
+  // The order errors are focused/listed in — top to bottom, matching the form.
+  const ERROR_ORDER = [
+    "registrationNumber",
+    ...DOC_FIELDS.flatMap((f) => [`doc-${f.type}`, `exp-${f.type}`, `docfile-${f.type}`]),
+  ];
+
+  /** Everything wrong with the current form, keyed by field element id. */
+  function validate(): FieldErrors {
+    const e: FieldErrors = {};
+    if (!form.registrationNumber.trim()) e.registrationNumber = "Registration number is required.";
+    for (const f of DOC_FIELDS) {
+      if (!f.required) continue;
+      const d = docs[f.type] ?? EMPTY_DOC;
+      if (!d.number.trim()) e[`doc-${f.type}`] = `${f.label}: enter the document number.`;
+      if (f.needsExpiry && !d.expiresOn) e[`exp-${f.type}`] = `${f.label}: enter the expiry date.`;
+      if (!d.fileUrl) e[`docfile-${f.type}`] = `${f.label}: attach the scanned PDF.`;
+    }
+    return e;
+  }
+
+  // Map a server rejection onto the field it belongs to (e.g. a duplicate
+  // registration), so the same highlight+summary UX covers backend errors too.
+  function applyServerError(err: unknown) {
+    const parsed = parseApiError(err);
+    const mapped: FieldErrors = {};
+    const gen: string[] = [];
+    for (const [k, msg] of Object.entries(parsed.fields)) {
+      if (k === "registrationNumber") mapped.registrationNumber = msg;
+      else gen.push(msg);
+    }
+    for (const msg of parsed.general) {
+      if (/registration/i.test(msg) && !mapped.registrationNumber) mapped.registrationNumber = msg;
+      else gen.push(msg);
+    }
+    setErrors((prev) => ({ ...prev, ...mapped }));
+    setGeneral(Array.from(new Set(gen)));
+    // A general error (e.g. a business rule) is shown in the summary that sits
+    // right above the Save button, so it's already in view where they clicked.
+    if (mapped.registrationNumber) focusField("registrationNumber");
+  }
+
+  // Build the summary in form order, then any leftover field errors, then
+  // general (non-field) messages.
+  const summaryItems: SummaryItem[] = [
+    ...ERROR_ORDER.filter((k) => errors[k]).map((k) => ({ field: k, message: errors[k] })),
+    ...Object.keys(errors)
+      .filter((k) => !ERROR_ORDER.includes(k))
+      .map((k) => ({ field: k, message: errors[k] })),
+    ...general.map((message) => ({ message })),
+  ];
+
+  async function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (incomplete.length > 0 || anyUploading) return;
-    onSubmit({
-      ...form,
-      manufactureYear: form.manufactureYear ? Number(form.manufactureYear) : null,
-      capacityKg: form.capacityKg ? Number(form.capacityKg) : null,
-      displayName: form.displayName || null,
-      documents: Object.entries(docs)
-        // A row counts only once it has both a number and its scan; a
-        // half-filled optional row is dropped rather than sent and rejected.
-        .filter(([, v]) => v.number.trim() && v.fileUrl)
-        .map(([docType, v]) => ({
-          docType,
-          number: v.number.trim(),
-          expiresOn: v.expiresOn || null,
-          fileUrl: v.fileUrl,
-          fileName: v.fileName || null,
+    if (anyUploading) return; // don't submit while a scan is still uploading
+    setGeneral([]);
+    const found = validate();
+    setErrors(found);
+    if (Object.keys(found).length > 0) {
+      const first = ERROR_ORDER.find((k) => found[k]) ?? Object.keys(found)[0];
+      if (first) focusField(first);
+      return;
+    }
+    try {
+      await onSubmit({
+        ...form,
+        manufactureYear: form.manufactureYear ? Number(form.manufactureYear) : null,
+        capacityKg: form.capacityKg ? Number(form.capacityKg) : null,
+        displayName: form.displayName || null,
+        documents: Object.entries(docs)
+          // A row counts only once it has both a number and its scan; a
+          // half-filled optional row is dropped rather than sent and rejected.
+          .filter(([, v]) => v.number.trim() && v.fileUrl)
+          .map(([docType, v]) => ({
+            docType,
+            number: v.number.trim(),
+            expiresOn: v.expiresOn || null,
+            fileUrl: v.fileUrl,
+            fileName: v.fileName || null,
+          })),
+        images: images.map((img, index) => ({
+          fileUrl: img.fileUrl,
+          fileName: img.fileName ?? null,
+          caption: img.caption ?? null,
+          isPrimary: img.isPrimary,
+          sortOrder: index,
         })),
-      images: images.map((img, index) => ({
-        fileUrl: img.fileUrl,
-        fileName: img.fileName ?? null,
-        caption: img.caption ?? null,
-        isPrimary: img.isPrimary,
-        sortOrder: index,
-      })),
-    });
+      });
+    } catch (err) {
+      applyServerError(err);
+    }
   }
 
   return (
     <Card className="mb-4">
-      <form onSubmit={submit} className="space-y-5">
+      <form onSubmit={submit} noValidate className="space-y-5">
         {draft.found && (
           <DraftBanner
             savedAt={draft.found.savedAt}
@@ -495,6 +568,7 @@ function VehicleForm({
             onDiscard={draft.discard}
           />
         )}
+        <ErrorSummary items={summaryItems} />
         <div>
           <h3 className="mb-3 text-base font-semibold">
             {existing ? `Edit ${existing.registrationNumber}` : "Vehicle details"}
@@ -507,6 +581,7 @@ function VehicleForm({
               onChange={(e) => set("registrationNumber", e.target.value.toUpperCase())}
               placeholder="RJ14GA5623"
               hint="Spaces and dashes are ignored"
+              error={errors.registrationNumber}
               required
             />
             <Input
@@ -676,6 +751,7 @@ function VehicleForm({
                       onChange={(e) => patchDoc(field.type, { number: e.target.value.toUpperCase() })}
                       placeholder={field.placeholder}
                       hint="Letters, digits and slashes — enter it exactly as printed"
+                      error={errors[`doc-${field.type}`]}
                     />
                     {field.needsExpiry && (
                       <Input
@@ -684,6 +760,7 @@ function VehicleForm({
                         type="date"
                         value={doc.expiresOn}
                         onChange={(e) => patchDoc(field.type, { expiresOn: e.target.value })}
+                        error={errors[`exp-${field.type}`]}
                       />
                     )}
                   </div>
@@ -691,6 +768,7 @@ function VehicleForm({
                   <DocumentUpload
                     id={field.type}
                     doc={doc}
+                    invalid={Boolean(errors[`docfile-${field.type}`])}
                     onPick={(file) => void attach(field.type, file)}
                     onClear={() => patchDoc(field.type, { fileUrl: "", fileName: "", error: null })}
                   />
@@ -700,18 +778,15 @@ function VehicleForm({
           </div>
         </div>
 
-        {incomplete.length > 0 && (
-          <div className="rounded-[var(--radius-control)] border border-[var(--warning)] bg-[var(--warning-soft)] p-3 text-sm text-[var(--warning)]">
-            Still needed before this vehicle can be saved:{" "}
-            {incomplete.map((f) => f.label).join(", ")}.
-          </div>
-        )}
+        {/* A second copy of the summary at the foot, so after a long form the
+            operator sees what's blocking without scrolling back up. */}
+        {summaryItems.length > 0 && <ErrorSummary items={summaryItems} />}
 
         <div className="flex flex-wrap items-center gap-2 border-t border-[var(--stroke)] pt-4">
           <Button
             type="submit"
             loading={busy}
-            disabled={incomplete.length > 0 || anyUploading || imageBusy}
+            disabled={anyUploading || imageBusy}
           >
             {existing ? "Save changes" : "Save vehicle"}
           </Button>

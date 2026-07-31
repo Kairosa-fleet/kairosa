@@ -9,11 +9,13 @@ import { useState } from "react";
 import { Button, Card, EmptyState, ErrorNote, Input, Spinner, StatusBadge } from "@/components/ui";
 import { AuthedImage, openAuthedFile } from "@/components/AuthedFile";
 import { DraftBanner, DraftSavedHint } from "@/components/DraftBanner";
+import { ErrorSummary, type SummaryItem } from "@/components/ErrorSummary";
 import {
   DocumentUpload, EMPTY_DOC, PhotoUpload, type DocDraft,
 } from "@/components/DocumentUpload";
 import { api } from "@/lib/api";
 import { clearFormDraft, DRAFT_KEYS, useFormDraft } from "@/lib/formDraft";
+import { type FieldErrors, focusField, parseApiError, withoutKey } from "@/lib/formErrors";
 import { cn } from "@/lib/format";
 import type { DriverDocType, DriverFull } from "@/lib/types";
 
@@ -102,11 +104,11 @@ export default function DriversPage() {
         </Button>
       </div>
 
-      {(drivers.error || create.error || update.error) && (
+      {/* List-load failures only; submit errors are shown inside the form,
+          mapped to the field the backend rejected. */}
+      {drivers.error && (
         <div className="mb-4">
-          <ErrorNote>
-            {((drivers.error ?? create.error ?? update.error) as Error).message}
-          </ErrorNote>
+          <ErrorNote>{(drivers.error as Error).message}</ErrorNote>
         </div>
       )}
 
@@ -121,7 +123,7 @@ export default function DriversPage() {
           busy={create.isPending || update.isPending}
           onCancel={() => { setShowForm(false); setEditing(null); }}
           onSubmit={(body) =>
-            editing ? update.mutate({ id: editing.id, body }) : create.mutate(body)
+            editing ? update.mutateAsync({ id: editing.id, body }) : create.mutateAsync(body)
           }
         />
       )}
@@ -435,7 +437,8 @@ function DriverForm({
   busy: boolean;
   /** When present the form edits this driver instead of creating one. */
   existing?: DriverFull;
-  onSubmit: (body: unknown) => void;
+  /** Rejects on a server error so the form can map it to the offending field. */
+  onSubmit: (body: unknown) => Promise<unknown>;
   onCancel: () => void;
 }) {
   const [f, setF] = useState({
@@ -483,9 +486,22 @@ function DriverForm({
     return seed;
   });
 
-  const set = (k: string, v: string) => setF((s) => ({ ...s, [k]: v }));
-  const patchDoc = (type: string, patch: Partial<DocDraft>) =>
+  // Field-level validation errors, keyed by the input's element id.
+  const [errors, setErrors] = useState<FieldErrors>({});
+  const [general, setGeneral] = useState<string[]>([]);
+
+  const set = (k: string, v: string) => {
+    setF((s) => ({ ...s, [k]: v }));
+    setErrors((e) => withoutKey(e, k));
+  };
+  const patchDoc = (type: string, patch: Partial<DocDraft>) => {
     setDocs((d) => ({ ...d, [type]: { ...(d[type] ?? EMPTY_DOC), ...patch } }));
+    setErrors((e) => {
+      let next = e;
+      for (const k of [`d-${type}`, `de-${type}`, `docfile-${type}`]) next = withoutKey(next, k);
+      return next;
+    });
+  };
 
   /* --- Draft persistence -------------------------------------------------
      Keeps this in-progress driver (fields, photo, licence and document
@@ -563,25 +579,60 @@ function DriverForm({
     }
   }
 
-  /** What is still missing before this driver can be dispatched. */
-  const incomplete: string[] = [];
-  if (!f.fullName.trim()) incomplete.push("Full name");
-  if (!f.licenceNumber.trim()) incomplete.push("Licence number");
-  if (!f.licenceExpiresOn) incomplete.push("Licence expiry");
-  if (!licence.fileUrl) incomplete.push("Licence scan");
-  for (const field of DOC_FIELDS) {
-    if (!field.required) continue;
-    const d = docs[field.type] ?? EMPTY_DOC;
-    if (!d.number.trim() || !d.fileUrl || (field.expiry && !d.expiresOn)) {
-      incomplete.push(field.label);
-    }
-  }
   const anyUploading =
     licence.uploading || Object.values(docs).some((d) => d.uploading);
 
-  function submit(e: React.FormEvent) {
+  const ERROR_ORDER = [
+    "fullName", "licenceNumber", "licenceExpiresOn", "docfile-licence",
+    ...DOC_FIELDS.flatMap((field) => [`d-${field.type}`, `de-${field.type}`, `docfile-${field.type}`]),
+  ];
+
+  /** Everything missing before this driver can be dispatched, keyed by field. */
+  function validate(): FieldErrors {
+    const e: FieldErrors = {};
+    if (!f.fullName.trim()) e.fullName = "Full name is required.";
+    if (!f.licenceNumber.trim()) e.licenceNumber = "Licence number is required.";
+    if (!f.licenceExpiresOn) e.licenceExpiresOn = "Licence expiry date is required.";
+    if (!licence.fileUrl) e["docfile-licence"] = "Attach the driving-licence scan.";
+    for (const field of DOC_FIELDS) {
+      if (!field.required) continue;
+      const d = docs[field.type] ?? EMPTY_DOC;
+      if (!d.number.trim()) e[`d-${field.type}`] = `${field.label}: enter the number/reference.`;
+      if (field.expiry && !d.expiresOn) e[`de-${field.type}`] = `${field.label}: enter the expiry date.`;
+      if (!d.fileUrl) e[`docfile-${field.type}`] = `${field.label}: attach the scanned PDF.`;
+    }
+    return e;
+  }
+
+  // Map a server rejection onto its field (server field names match our input
+  // names for the top-level driver fields).
+  function applyServerError(err: unknown) {
+    const parsed = parseApiError(err);
+    setErrors((prev) => ({ ...prev, ...parsed.fields }));
+    setGeneral(Array.from(new Set(parsed.general)));
+    const first = ERROR_ORDER.find((k) => parsed.fields[k]);
+    if (first) focusField(first);
+  }
+
+  const summaryItems: SummaryItem[] = [
+    ...ERROR_ORDER.filter((k) => errors[k]).map((k) => ({ field: k, message: errors[k] })),
+    ...Object.keys(errors)
+      .filter((k) => !ERROR_ORDER.includes(k))
+      .map((k) => ({ field: k, message: errors[k] })),
+    ...general.map((message) => ({ message })),
+  ];
+
+  async function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (incomplete.length > 0 || anyUploading) return;
+    if (anyUploading) return;
+    setGeneral([]);
+    const found = validate();
+    setErrors(found);
+    if (Object.keys(found).length > 0) {
+      const first = ERROR_ORDER.find((k) => found[k]) ?? Object.keys(found)[0];
+      if (first) focusField(first);
+      return;
+    }
     const body: Record<string, unknown> = { ...f };
     for (const key of Object.keys(body)) if (body[key] === "") body[key] = null;
     body.photoUrl = photo.fileUrl || null;
@@ -599,12 +650,17 @@ function DriverForm({
         fileUrl: v.fileUrl,
         fileName: v.fileName || null,
       }));
-    onSubmit(body);
+    try {
+      await onSubmit(body);
+    } catch (err) {
+      applyServerError(err);
+    }
   }
 
   return (
     <Card className="mb-4">
-      <form onSubmit={submit} className="space-y-5">
+      <form onSubmit={submit} noValidate className="space-y-5">
+        <ErrorSummary items={summaryItems} />
         {draft.found && (
           <DraftBanner
             savedAt={draft.found.savedAt}
@@ -630,8 +686,8 @@ function DriverForm({
             </p>
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
-            <Input label="Full name" name="fullName" value={f.fullName} onChange={(e) => set("fullName", e.target.value)} required minLength={2} placeholder="Ramesh Patel" />
-            <Input label="Phone" name="phone" value={f.phone} onChange={(e) => set("phone", e.target.value)} placeholder="+91 98123 45678" inputMode="tel" />
+            <Input label="Full name" name="fullName" value={f.fullName} onChange={(e) => set("fullName", e.target.value)} error={errors.fullName} required minLength={2} placeholder="Ramesh Patel" />
+            <Input label="Phone" name="phone" value={f.phone} onChange={(e) => set("phone", e.target.value)} error={errors.phone} placeholder="+91 98123 45678" inputMode="tel" />
             <Input label="Employee code" name="employeeCode" value={f.employeeCode} onChange={(e) => set("employeeCode", e.target.value)} placeholder="EMP-001" />
             <Input label="Date of birth" name="dateOfBirth" type="date" value={f.dateOfBirth} onChange={(e) => set("dateOfBirth", e.target.value)} />
             <Input label="Blood group" name="bloodGroup" value={f.bloodGroup} onChange={(e) => set("bloodGroup", e.target.value)} placeholder="B+" hint="Shown to emergency services" />
@@ -645,7 +701,7 @@ function DriverForm({
         <div className="border-t border-[var(--stroke)] pt-4">
           <h3 className="mb-3 text-base font-semibold">Driving licence</h3>
           <div className="grid gap-4 sm:grid-cols-2">
-            <Input label="Licence number" name="licenceNumber" value={f.licenceNumber} onChange={(e) => set("licenceNumber", e.target.value.toUpperCase())} placeholder="RJ1420110012345" />
+            <Input label="Licence number" name="licenceNumber" value={f.licenceNumber} onChange={(e) => set("licenceNumber", e.target.value.toUpperCase())} error={errors.licenceNumber} placeholder="RJ1420110012345" />
             <div className="flex flex-col gap-1.5">
               <label htmlFor="dlclass" className="text-sm font-medium">Class</label>
               <select
@@ -661,13 +717,17 @@ function DriverForm({
               </p>
             </div>
             <Input label="Issuing RTO" name="licenceIssuingRto" value={f.licenceIssuingRto} onChange={(e) => set("licenceIssuingRto", e.target.value)} placeholder="RTO Jaipur (RJ14)" />
-            <Input label="Licence expires on" name="licenceExpiresOn" type="date" value={f.licenceExpiresOn} onChange={(e) => set("licenceExpiresOn", e.target.value)} required />
+            <Input label="Licence expires on" name="licenceExpiresOn" type="date" value={f.licenceExpiresOn} onChange={(e) => set("licenceExpiresOn", e.target.value)} error={errors.licenceExpiresOn} required />
             <div className="sm:col-span-2">
               <DocumentUpload
                 id="licence"
                 doc={licence}
                 label="Attach the licence scan (PDF)"
-                onPick={(file) => void upload(file, (r) => setLicence((c) => ({ ...c, ...r })))}
+                invalid={Boolean(errors["docfile-licence"])}
+                onPick={(file) => {
+                  setErrors((e) => withoutKey(e, "docfile-licence"));
+                  void upload(file, (r) => setLicence((c) => ({ ...c, ...r })));
+                }}
                 onClear={() => setLicence((c) => ({ ...c, fileUrl: "", fileName: "", error: null }))}
               />
             </div>
@@ -723,6 +783,7 @@ function DriverForm({
                       value={doc.number}
                       onChange={(e) => patchDoc(field.type, { number: e.target.value.toUpperCase() })}
                       placeholder={field.placeholder}
+                      error={errors[`d-${field.type}`]}
                     />
                     {field.expiry && (
                       <Input
@@ -731,12 +792,14 @@ function DriverForm({
                         type="date"
                         value={doc.expiresOn}
                         onChange={(e) => patchDoc(field.type, { expiresOn: e.target.value })}
+                        error={errors[`de-${field.type}`]}
                       />
                     )}
                   </div>
                   <DocumentUpload
                     id={field.type}
                     doc={doc}
+                    invalid={Boolean(errors[`docfile-${field.type}`])}
                     onPick={(file) => void upload(file, (r) => patchDoc(field.type, r))}
                     onClear={() => patchDoc(field.type, { fileUrl: "", fileName: "", error: null })}
                   />
@@ -746,17 +809,13 @@ function DriverForm({
           </div>
         </div>
 
-        {incomplete.length > 0 && (
-          <div className="rounded-[var(--radius-control)] border border-[var(--warning)] bg-[var(--warning-soft)] p-3 text-sm text-[var(--warning)]">
-            Still needed before this driver can be saved: {incomplete.join(", ")}.
-          </div>
-        )}
+        {summaryItems.length > 0 && <ErrorSummary items={summaryItems} />}
 
         <div className="flex flex-wrap items-center gap-2 border-t border-[var(--stroke)] pt-4">
           <Button
             type="submit"
             loading={busy}
-            disabled={incomplete.length > 0 || anyUploading}
+            disabled={anyUploading}
           >
             {existing ? "Save changes" : "Save driver"}
           </Button>
